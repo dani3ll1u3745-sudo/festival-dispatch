@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Volunteer | Festival Dispatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Assignment alert -->
+<div class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle">
+  <div class="grow">
+    <p style="font-size:1.1rem">You've been dispatched</p>
+    <h1 id="alertTitle"></h1>
+    <p id="alertZone" style="font-size:1.3rem"></p>
+    <p id="alertSummary" style="margin-top:1rem"></p>
+    <p id="alertStatus" style="margin-top:1rem; font-weight:500"></p>
+  </div>
+  <div class="stack">
+    <a class="button full" id="directionsBtn" target="_blank" rel="noopener">Open directions</a>
+    <button class="secondary full" id="acceptBtn">Accept</button>
+    <button class="secondary full" id="arrivedBtn">I've arrived</button>
+  </div>
+</div>
+
+<!-- Resume overlay (shown after a reload, to re-enable sound) -->
+<div class="overlay" id="resume" hidden>
+  <div class="panel" style="max-width: 420px; width: 100%;">
+    <h1 id="resumeName"></h1>
+    <p class="muted">Tap to turn alerts back on.</p>
+    <button class="full" id="resumeBtn" style="margin-top: 1rem;">I'm ready</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="topbar">
+    <h1 id="title">Volunteer</h1>
+    <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
+  </div>
+
+  <!-- Join -->
+  <section id="joinView" hidden>
+    <div class="panel">
+      <h2>Join the volunteer team</h2>
+      <label for="volName" class="muted small">Your name</label>
+      <input type="text" id="volName" autocomplete="given-name" placeholder="First name">
+      <p class="muted small" style="margin-top: 1rem;">Your qualifications</p>
+      <div id="quals"></div>
+      <button class="full" id="joinBtn" style="margin-top: 1rem;">Join and turn on alerts</button>
+      <p class="small muted" style="margin-top: .5rem;">Keep this page open during your shift.</p>
+    </div>
+  </section>
+
+  <!-- On shift -->
+  <section id="shiftView" hidden>
+    <div class="panel">
+      <h2 id="hello"></h2>
+      <p id="post" class="muted"></p>
+      <p id="standby" style="margin-top:.5rem"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
+      <button class="secondary full" id="showAssignment" hidden style="margin-top:.75rem">View current assignment</button>
+    </div>
+    <div class="panel">
+      <h2>Report an incident</h2>
+      <p class="muted small">Reports go straight to the coordinator.</p>
+      <input type="text" id="note" placeholder="What's happening? (optional)" style="margin: .5rem 0;">
+      <div class="row">
+        <button class="danger" data-report="fire">Fire</button>
+        <button class="secondary" data-report="medical">Medical</button>
+        <button class="secondary" data-report="overcrowding">Overcrowding</button>
+      </div>
+      <p class="small" id="reportStatus" style="margin-top:.5rem"></p>
+    </div>
+  </section>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="common.js"></script>
+<script>
+  const socket = io();
+  const STORAGE_KEY = 'fd-volunteer-id';
+  let config = null;
+  let me = null;
+  let assignment = null;
+
+  const storedId = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
+  const storeId = id => { try { id ? localStorage.setItem(STORAGE_KEY, id) : localStorage.removeItem(STORAGE_KEY); } catch {} };
+
+  socket.on('connect', () => {
+    dot.classList.add('on'); conn.textContent = 'Connected';
+    const id = storedId();
+    if (!id) return;
+    // Reconnect after a locked screen or reload: the server re-links this phone.
+    socket.emit('volunteer:hello', { id }, ({ volunteer }) => {
+      if (!volunteer) { storeId(null); me = null; showJoin(); return; } // server was restarted
+      const firstLoad = !me;
+      me = volunteer;
+      showShift();
+      if (firstLoad) { resumeName.textContent = `Welcome back, ${me.name}`; resume.hidden = false; }
+      if (me.assignment) showAlert(me.assignment, false);
+    });
+  });
+  socket.on('disconnect', () => { dot.classList.remove('on'); conn.textContent = 'Reconnecting'; });
+
+  socket.on('state', s => {
+    config = s.config;
+    title.textContent = config.festivalName;
+    quals.innerHTML = Object.entries(config.qualifications).map(([k, label]) =>
+      `<label class="check"><input type="checkbox" value="${k}"> ${FD.esc(label)}</label>`).join('');
+    if (!storedId()) showJoin();
+  });
+
+  socket.on('assignment', a => showAlert(a, true));
+  socket.on('assignment:cancelled', ({ resolved }) => {
+    assignment = null;
+    alertEl.classList.remove('show');
+    showAssignment.hidden = true;
+    standby.innerHTML = resolved ? '<strong>Incident resolved. Thank you!</strong> Standing by.' : '<strong>Standing by.</strong> Your assignment was reassigned.';
+  });
+
+  function showJoin() { joinView.hidden = false; shiftView.hidden = true; }
+  function showShift() {
+    joinView.hidden = true; shiftView.hidden = false;
+    hello.textContent = `On shift: ${me.name}`;
+    post.textContent = `Your post: ${config?.zones[me.zoneId]?.name || me.zoneId}`;
+  }
+
+  joinBtn.onclick = () => {
+    FD.unlockAudio(); // this tap is what allows alert sounds later
+    const qualifications = [...quals.querySelectorAll('input:checked')].map(i => i.value);
+    joinBtn.disabled = true;
+    socket.emit('volunteer:join', { name: volName.value.trim() || 'Volunteer', qualifications }, ({ volunteer }) => {
+      me = volunteer; storeId(me.id); showShift(); joinBtn.disabled = false;
+    });
+  };
+  resumeBtn.onclick = () => { FD.unlockAudio(); resume.hidden = true; };
+
+  // ---- Assignment alert ----
+  const alertEl = document.getElementById('alert');
+  function showAlert(a, isNew) {
+    assignment = a;
+    alertEl.className = `alert show ${a.type}`;
+    alertTitle.textContent = a.typeLabel;
+    alertZone.textContent = `Go to ${a.zoneName} (from ${a.fromZoneName})`;
+    alertSummary.textContent = a.summary || '';
+    directionsBtn.href = a.directionsUrl;
+    updateAlertStatus();
+    showAssignment.hidden = false;
+    standby.innerHTML = `<strong>Assigned:</strong> ${FD.esc(a.typeLabel)} at ${FD.esc(a.zoneName)}`;
+    if (isNew) FD.beep(4);
+  }
+  function updateAlertStatus() {
+    const s = assignment?.status;
+    acceptBtn.disabled = s === 'accepted' || s === 'arrived';
+    arrivedBtn.disabled = s === 'arrived';
+    alertStatus.textContent = s === 'accepted' ? 'Accepted. The coordinator knows you\u2019re on the way.' : s === 'arrived' ? 'Marked as arrived.' : '';
+  }
+  function respond(status) {
+    assignment.status = status;
+    socket.emit('assignment:respond', { incidentId: assignment.incidentId, status });
+    updateAlertStatus();
+    if (status === 'arrived') setTimeout(() => alertEl.classList.remove('show'), 800);
+  }
+  acceptBtn.onclick = () => respond('accepted');
+  arrivedBtn.onclick = () => respond('arrived');
+  showAssignment.onclick = () => assignment && showAlert(assignment, false);
+
+  // ---- Reporting ----
+  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () => {
+    if (!me) return;
+    socket.emit('incident:report', {
+      type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId,
+      reporterId: me.id, note: note.value.trim() || `Reported by ${me.name}`,
+    }, res => {
+      reportStatus.textContent = res?.error ? res.error : 'Sent to the coordinator.';
+      note.value = '';
+    });
+  }));
+</script>
+</body>
+</html>

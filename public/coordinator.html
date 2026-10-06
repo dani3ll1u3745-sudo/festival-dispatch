@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coordinator | Festival Dispatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="banner" id="banner"></div>
+
+<div class="overlay" id="start">
+  <div class="panel" style="max-width: 420px; width: 100%;">
+    <h1>Coordinator</h1>
+    <p class="muted">Alerts play a sound, so tap to start your shift.</p>
+    <button class="full" id="startBtn" style="margin-top: 1rem;">Start shift</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="topbar">
+    <h1 id="title">Coordinator</h1>
+    <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
+  </div>
+
+  <section id="incidents">
+    <div class="panel muted" id="empty">No incidents. New alerts from cameras and volunteers appear here.</div>
+  </section>
+
+  <div class="panel">
+    <h2>Volunteers</h2>
+    <div id="roster" class="small muted">Loading…</div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="common.js"></script>
+<script>
+  const socket = io();
+  const { esc, timeAgo } = FD;
+  let incidents = new Map();
+  let volunteers = [];
+  let config = null;
+
+  startBtn.onclick = () => { FD.unlockAudio(); start.hidden = true; };
+
+  socket.on('connect', () => { dot.classList.add('on'); conn.textContent = 'Connected'; });
+  socket.on('disconnect', () => { dot.classList.remove('on'); conn.textContent = 'Reconnecting'; });
+
+  socket.on('state', s => {
+    config = s.config;
+    title.textContent = config.festivalName;
+    incidents = new Map(s.incidents.map(i => [i.id, i]));
+    volunteers = s.volunteers;
+    render();
+  });
+  socket.on('incident:new', i => {
+    incidents.set(i.id, i);
+    FD.beep(3);
+    showBanner(`${i.typeLabel} at ${i.zoneName}`, i.type);
+    render();
+  });
+  socket.on('incident:updated', i => { incidents.set(i.id, i); render(); });
+  socket.on('volunteers:updated', v => { volunteers = v; render(); });
+
+  function showBanner(text, type) {
+    banner.textContent = text;
+    banner.style.background = `var(--${type === 'overcrowding' ? 'crowd' : type})`;
+    banner.classList.add('show');
+    clearTimeout(showBanner.t);
+    showBanner.t = setTimeout(() => banner.classList.remove('show'), 4000);
+  }
+
+  const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
+  const statusText = i => {
+    if (i.status === 'resolved') return 'Resolved';
+    if (i.status === 'open') return 'Waiting for dispatch';
+    const v = volunteers.find(x => x.id === i.assignedVolunteerId);
+    const who = v ? v.name : 'Volunteer';
+    return { sent: `${who} notified`, accepted: `${who} is on the way`, arrived: `${who} has arrived` }[i.assignmentStatus] || 'Dispatched';
+  };
+
+  function incidentCard(i) {
+    const rec = i.recommendation;
+    const reasons = new Map((rec?.volunteers || []).map(v => [v.id, v.reason]));
+    // Order shortlist by the AI's ranking when available.
+    const order = rec?.volunteers?.map(v => v.id) || [];
+    const shortlist = [...i.shortlist].sort((a, b) => {
+      const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    const sources = i.sources.map(s => (s === 'camera' ? 'Camera' : 'Volunteer report')).join(' + ');
+    const conf = i.confidence != null && i.sources.includes('camera') ? `, ${(i.confidence * 100).toFixed(0)}% confidence` : '';
+
+    const candidates = i.status === 'resolved' ? '' : shortlist.length ? shortlist.map(v => `
+      <div class="candidate">
+        <div>
+          <h3>${esc(v.name)} ${v.online ? '<span class="status-dot on" title="Phone connected"></span>' : ''}</h3>
+          <p class="small muted">${esc(reasons.get(v.id) || `${qualNames(v.qualifications)}; ${v.distance} m away`)}</p>
+          ${v.qualified ? '' : '<p class="small" style="color: var(--hivis)">No matching qualification</p>'}
+        </div>
+        <button data-dispatch="${i.id}" data-vol="${v.id}" ${i.assignedVolunteerId === v.id ? 'disabled' : ''}>
+          ${i.assignedVolunteerId === v.id ? 'Sent' : 'Dispatch'}
+        </button>
+      </div>`).join('') : '<p class="small muted">No available volunteers.</p>';
+
+    return `
+      <article class="panel incident ${i.type} ${i.status}">
+        <div class="row" style="justify-content: space-between; align-items: baseline;">
+          <h2><span class="tag ${i.type}">${esc(i.typeLabel)}</span> ${esc(i.zoneName)}</h2>
+          <span class="small muted">${timeAgo(i.createdAt)}</span>
+        </div>
+        <p class="small muted">${sources}${conf}${i.reportCount > 1 ? `, ${i.reportCount} reports` : ''}</p>
+        ${i.note ? `<p class="small">“${esc(i.note)}”</p>` : ''}
+        ${i.snapshot ? `<img class="snapshot" src="${i.snapshot}" alt="Camera frame at detection">` : ''}
+        ${rec ? `
+          <p>${esc(rec.summary)}</p>
+          <ul class="small">${rec.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+          <p class="small muted">${rec.source === 'ai' ? 'AI recommendation' : 'Standard procedure (AI unavailable)'}</p>
+        ` : '<p class="small muted">Getting recommendation…</p>'}
+        <p><strong>${statusText(i)}</strong></p>
+        ${candidates}
+        ${i.status !== 'resolved' ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
+      </article>`;
+  }
+
+  function render() {
+    if (!config) return;
+    const list = [...incidents.values()].sort((a, b) =>
+      (a.status === 'resolved') - (b.status === 'resolved') || b.createdAt - a.createdAt);
+    empty.hidden = list.length > 0;
+    document.querySelectorAll('#incidents article').forEach(n => n.remove());
+    incidentsEl.insertAdjacentHTML('beforeend', list.map(incidentCard).join(''));
+
+    roster.innerHTML = volunteers.map(v => `
+      <div class="candidate">
+        <div><h3>${v.online ? '<span class="status-dot on"></span>' : '<span class="status-dot"></span>'}${esc(v.name)}</h3>
+        <p class="muted">${qualNames(v.qualifications)}, at ${esc(config.zones[v.zoneId]?.name)}</p></div>
+        <span class="tag quiet">${v.status}</span>
+      </div>`).join('') || 'No volunteers yet.';
+  }
+  const incidentsEl = document.getElementById('incidents');
+
+  document.addEventListener('click', e => {
+    const d = e.target.closest('[data-dispatch]');
+    if (d) {
+      d.disabled = true;
+      socket.emit('dispatch', { incidentId: d.dataset.dispatch, volunteerId: d.dataset.vol }, res => {
+        if (res?.error) alert(res.error);
+        else if (!res.delivered) showBanner('Assigned, but that volunteer has no phone connected', 'medical');
+      });
+    }
+    const r = e.target.closest('[data-resolve]');
+    if (r) socket.emit('incident:resolve', { incidentId: r.dataset.resolve });
+  });
+
+  setInterval(render, 15000); // keep "x min ago" fresh
+</script>
+</body>
+</html>

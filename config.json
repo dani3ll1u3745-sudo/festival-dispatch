@@ -1,0 +1,22 @@
+{
+  "festivalName": "Kings Domain Music Festival",
+  "locationMode": "simulated",
+  "cameraZoneId": "main-stage",
+  "volunteerStartZones": ["food-court", "gate-a", "first-aid-tent"],
+  "zones": {
+    "main-stage":     { "name": "Main Stage",     "lat": -37.8240, "lng": 144.9718 },
+    "food-court":     { "name": "Food Court",     "lat": -37.8255, "lng": 144.9745 },
+    "gate-a":         { "name": "Gate A",         "lat": -37.8212, "lng": 144.9700 },
+    "first-aid-tent": { "name": "First Aid Tent", "lat": -37.8263, "lng": 144.9722 }
+  },
+  "qualifications": {
+    "first_aid": "First aid",
+    "fire_warden": "Fire warden",
+    "crowd_control": "Crowd control"
+  },
+  "incidentTypes": {
+    "fire":         { "label": "Fire",         "requires": ["fire_warden", "first_aid"] },
+    "medical":      { "label": "Medical",      "requires": ["first_aid"] },
+    "overcrowding": { "label": "Overcrowding", "requires": ["crowd_control"] }
+  }
+}

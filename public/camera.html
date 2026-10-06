@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camera | Festival Dispatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .page { max-width: 1100px; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    video, #overlay { width: 100%; border-radius: var(--radius); display: block; }
+    .feed { position: relative; background: #000; border-radius: var(--radius); }
+    #overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
+    .live { position: absolute; top: .6rem; left: .6rem; }
+    #qr { background: #fff; padding: .6rem; border-radius: 8px; width: max-content; margin: .5rem 0; }
+    #log { max-height: 220px; overflow: auto; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="topbar">
+    <h1 id="title">Camera</h1>
+    <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="feed">
+        <video id="cam" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <span class="tag fire live" id="liveTag">Live</span>
+      </div>
+      <p class="muted small" id="camStatus">Starting camera…</p>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Join as a volunteer</h2>
+        <p class="muted small">Scan with your phone camera.</p>
+        <div id="qr"></div>
+        <p class="small" id="qrUrl"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Manual trigger</h2>
+        <p class="muted small">Backup if detection misses. Sends the current frame.</p>
+        <div class="row">
+          <button class="danger" data-type="fire">Fire</button>
+          <button class="secondary" data-type="overcrowding">Overcrowding</button>
+          <button class="secondary" data-type="medical">Medical</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Sent reports</h2>
+        <div id="log" class="muted">None yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="common.js"></script>
+<script>
+  const socket = io();
+  const video = document.getElementById('cam');
+  let config = null;
+
+  socket.on('connect', () => { dot.classList.add('on'); conn.textContent = 'Connected'; });
+  socket.on('disconnect', () => { dot.classList.remove('on'); conn.textContent = 'Reconnecting'; });
+
+  // ---- Camera ----
+  navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+    .then(stream => { video.srcObject = stream; camStatus.textContent = 'Camera running.'; })
+    .catch(err => { camStatus.textContent = 'Camera blocked: allow camera access in the browser and reload. (' + err.name + ')'; });
+
+  // Grab the current frame as a small JPEG data URL (optionally with the overlay canvas drawn on top).
+  window.getCameraFrame = function (maxWidth = 480, quality = 0.6) {
+    if (!video.videoWidth) return null;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+    const c = document.createElement('canvas');
+    c.width = Math.round(video.videoWidth * scale);
+    c.height = Math.round(video.videoHeight * scale);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    const ov = document.getElementById('overlay');
+    if (ov.width && ov.height) ctx.drawImage(ov, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', quality);
+  };
+
+  // ---- THE function the detector calls ----
+  // reportIncident({ type: 'fire' | 'overcrowding' | 'medical', confidence: 0..1, snapshot?: dataURL, note?: string })
+  const lastSent = {};
+  window.reportIncident = function (event) {
+    // Throttle to one report per type per second; the server merges repeats anyway.
+    const now = Date.now();
+    if (lastSent[event.type] && now - lastSent[event.type] < 1000) return;
+    lastSent[event.type] = now;
+    const payload = {
+      source: 'camera',
+      zoneId: config?.cameraZoneId,
+      timestamp: Date.now(),
+      snapshot: getCameraFrame(),
+      ...event,
+    };
+    socket.emit('incident:report', payload, result => addLog(payload, result));
+  };
+
+  function addLog(p, result) {
+    if (log.textContent === 'None yet.') log.innerHTML = '';
+    const line = document.createElement('div');
+    const conf = p.confidence != null ? ` ${(p.confidence * 100).toFixed(0)}%` : '';
+    line.textContent = `${new Date().toLocaleTimeString()}  ${p.type}${conf}  ${result?.error ? 'ERROR ' + result.error : result?.merged ? '(merged into ' + result.id + ')' : '→ ' + result?.id}`;
+    log.prepend(line);
+  }
+
+  document.querySelectorAll('[data-type]').forEach(b =>
+    b.addEventListener('click', () => reportIncident({ type: b.dataset.type, confidence: 1, note: 'Manual trigger' }))
+  );
+
+  // ---- Config, title, QR ----
+  fetch('/api/config').then(r => r.json()).then(c => {
+    config = c;
+    const camZone = c.zones[c.cameraZoneId].name;
+    title.textContent = `${camZone} camera`;
+    document.title = `${camZone} camera | Festival Dispatch`;
+    const base = c.publicUrl || location.origin;
+    const url = base.replace(/\/$/, '') + '/volunteer.html';
+    if (window.QRCode) new QRCode(document.getElementById('qr'), { text: url, width: 180, height: 180 });
+    else document.getElementById('qr').hidden = true; // QR library needs internet
+    qrUrl.textContent = url;
+    if (!c.publicUrl && location.hostname === 'localhost') {
+      qrUrl.textContent += '  (localhost won\u2019t work on phones: set PUBLIC_URL in .env to your ngrok URL)';
+    }
+  });
+</script>
+<!-- Detection lives in its own file so the detection teammate never conflicts with this page. -->
+<script src="detector.js"></script>
+</body>
+</html>
