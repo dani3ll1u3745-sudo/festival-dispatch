@@ -248,7 +248,7 @@ function templateRecommendation(incident) {
     options: [{
       id: 'o1',
       title: incident.needsEscalation ? 'Call emergency services' : {
-        fire: 'Send a fire warden with an extinguisher', medical: 'Send a first aider with a kit',
+        fire: 'Send a fire response volunteer with an extinguisher', medical: 'Send a first aider with a kit',
         overcrowding: 'Send crowd control to slow entry', other: 'Send someone to assess',
       }[incident.type] || 'Send someone to assess',
       why: 'Standard first response for this kind of incident.',
