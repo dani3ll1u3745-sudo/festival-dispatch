@@ -73,6 +73,7 @@
       </div>
       <p class="small" id="reportStatus" style="margin-top:.5rem"></p>
     </div>
+    <button class="secondary full" id="leaveBtn">Leave shift</button>
   </section>
 </div>
 
@@ -136,6 +137,18 @@
     });
   };
   resumeBtn.onclick = () => { FD.unlockAudio(); resume.hidden = true; };
+  leaveBtn.onclick = () => {
+    if (!me || !confirm('Leave your shift?')) return;
+    socket.emit('volunteer:leave', { id: me.id });
+    storeId(null);
+    me = null; assignment = null;
+    alertEl.classList.remove('show');
+    showAssignment.hidden = true;
+    standby.innerHTML = '<strong>Standing by.</strong> You\'ll get an alert here when you\'re needed.';
+    volName.value = '';
+    quals.querySelectorAll('input:checked').forEach(i => { i.checked = false; });
+    showJoin();
+  };
 
   // ---- Assignment alert ----
   const alertEl = document.getElementById('alert');

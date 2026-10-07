@@ -280,6 +280,23 @@ io.on('connection', socket => {
     broadcastVolunteers();
   });
 
+  // Volunteer ends their shift: free any open assignment and drop them from the roster.
+  socket.on('volunteer:leave', ({ id } = {}) => {
+    const v = volunteers.find(x => x.id === id);
+    if (!v || String(v.id).startsWith('seed-')) return;
+    const inc = incidents.find(i => i.assignedVolunteerId === v.id && i.status !== 'resolved');
+    if (inc) {
+      inc.status = 'open';
+      inc.assignedVolunteerId = null;
+      inc.assignmentStatus = null;
+      io.emit('incident:updated', inc);
+    }
+    volunteers.splice(volunteers.indexOf(v), 1);
+    console.log(`[volunteer] ${v.name} left`);
+    broadcastVolunteers();
+    refreshOpenShortlists();
+  });
+
   socket.on('dispatch', ({ incidentId, volunteerId } = {}, ack) => {
     const inc = incidents.find(i => i.id === incidentId);
     const v = volunteers.find(x => x.id === volunteerId);
