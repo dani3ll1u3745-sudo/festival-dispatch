@@ -74,10 +74,10 @@
       <p class="stage-label" id="listening">Tap to describe what's happening</p>
       <p class="stage-hint" id="stageHint">Your voice clip goes to the coordinator.</p>
       <p class="small warn" id="voiceError" hidden>Voice input unavailable, please type instead</p>
-      <textarea id="note" rows="3" placeholder="Or type what's happening" aria-label="What's happening"></textarea>
+      <textarea id="note" rows="3" placeholder="Type what's happening (optional if you recorded)" aria-label="What's happening"></textarea>
       <div class="clip-row" id="clipRow" hidden>
         <button class="secondary" id="clipPlay" type="button" aria-label="Play voice clip"></button>
-        <span id="clipDuration"></span>
+        <span><span id="clipLabel">Voice clip ready</span>, <span id="clipDuration"></span></span>
         <button class="link-button" id="clipRemove" type="button">Remove clip</button>
       </div>
       <div class="report-grid">
@@ -170,9 +170,9 @@
   resumeBtn.onclick = () => { FD.unlockAudio(); resume.hidden = true; };
   leaveBtn.onclick = () => {
     if (!me || !confirm('Leave your shift?')) return;
-    if (session) session.discardClip = true;
-    stopVoice({ abortTranscript: true });
-    clearPendingClip();
+    if (session) session.discard = true;
+    stopVoice();
+    clearPending();
     note.value = '';
     socket.emit('volunteer:leave', { id: me.id });
     storeId(null);
@@ -219,9 +219,10 @@
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
   // ---- Voice input ----
-  // With a speech-to-text key on the server, every phone just records a clip and the server transcribes it.
-  // Without one, the browser transcribes live: alongside recording where it can, transcription only on
-  // iPhone Safari (recording and transcription compete for the mic there), recording only where it can't.
+  // The volunteer only ever sees their clip: what they said is transcribed in the background, after the report
+  // has gone, and only the coordinator sees it. When the server transcribes (Whisper), phones just record.
+  // Otherwise the phone's speech recognition listens too, in memory only: alongside recording where it can, on
+  // its own on iPhone Safari (recording and recognition compete for the mic there), not at all where it can't.
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const recordSupported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
@@ -230,12 +231,12 @@
     : { record: recordSupported && !(isIOS && SpeechRecognition), transcribe: !!SpeechRecognition };
   const updateStageHint = () => { stageHint.hidden = !voiceMode().record; }; // no clip without recording
   const MAX_SECONDS = 60;
+  const TRANSCRIPT_WAIT_MS = 5000; // after stopping, how long the phone's recognition gets to finish
   const MIC_ICON = micBtn.querySelector('svg').outerHTML;
   const STOP_ICON = '<svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
   const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-  let session = null;     // the recording/transcribing in progress: { stream, recorder, recognition, startedAt, ... }
-  let lastSession = null; // still allowed to deliver its final transcript after a tap-to-stop
-  let pendingClip = null; // { blob, mime, durationSec, url }
+  let session = null; // the recording in progress: { stream, recorder, speech, startedAt, ... }
+  let pending = null; // a stopped recording waiting to be sent: { clip: { blob, mime, url } | null, durationSec, speech }
 
   function setListening(on, s) {
     if (micBtn.classList.contains('recording') !== on) micBtn.innerHTML = on ? STOP_ICON : MIC_ICON;
@@ -276,11 +277,8 @@
 
   async function startVoice() {
     voiceError.hidden = true;
-    if (lastSession) lastSession.acceptResults = false;
     const mode = voiceMode();
-    const s = session = lastSession = { startedAt: Date.now(), acceptResults: true, ...mode };
-    s.recEnded = new Promise(r => { s.markRecEnded = r; });
-    if (!s.transcribe) s.markRecEnded();
+    const s = session = { startedAt: Date.now(), ...mode };
     dlog(`mode: record ${s.record}, browser transcription ${s.transcribe}, server transcription ${serverTranscribes()}`);
     setAudioSession('play-and-record');
     setListening(true, s);
@@ -302,9 +300,7 @@
           const type = recorder.mimeType || mime || 'audio/webm';
           const blob = new Blob(chunks, { type });
           dlog(`clip: ${blob.size} bytes, ${type}`);
-          if (!blob.size || s.discardClip) return;
-          setPendingClip(blob, type, s.durationSec);
-          if (serverTranscribes()) transcribeOnServer(pendingClip);
+          if (blob.size) s.clip = { blob, mime: type, url: null };
         };
         recorder.start(); // recorder first, then transcription
         Object.assign(s, { stream, recorder, startedAt: Date.now() });
@@ -315,54 +311,48 @@
     if (session !== s) return;
     if (s.transcribe) startRecognition(s);
     else if (!s.recorder) { stopVoice(); showVoiceError(s.recordError?.name || 'not-allowed'); return; }
-    else if (!serverTranscribes()) {
-      // Recording works but this browser can't transcribe (e.g. Chrome on iPhone): say so rather than stay silent.
-      voiceError.textContent = 'This browser can’t turn speech into text, but your voice clip will still go to the coordinator. On iPhone, Safari can transcribe.';
-      voiceError.hidden = false;
-    }
     s.timer = setInterval(() => setListening(true, s), 500);
     s.autoStop = setTimeout(() => { if (session === s) stopVoice(); }, MAX_SECONDS * 1000);
   }
 
+  // Collects what the phone's recognition hears, in memory only: it is never shown to the volunteer.
+  // speech.finished resolves when recognition ends or fails.
   function startRecognition(s) {
-    const base = note.value.trim(); // spoken text is appended to what's already typed
-    const rec = s.recognition = new SpeechRecognition();
+    const speech = s.speech = { text: '', done: false, stoppedAt: null };
+    speech.finished = new Promise(r => { speech.finish = () => { speech.done = true; r(); }; });
+    const rec = speech.recognition = new SpeechRecognition();
     rec.lang = 'en-AU';
     rec.interimResults = true;
     rec.continuous = true;
     rec.onresult = e => {
-      if (!s.acceptResults) return; // a stopped or sent session can't refill the box
-      const spoken = [...e.results].map(r => r[0].transcript).join('').trim();
-      if (!spoken) return; // browsers can finish with an empty result: never wipe what was already heard
-      note.value = [base, spoken].filter(Boolean).join(' ');
+      const heard = [...e.results].map(r => r[0].transcript).join('').trim(); // final results plus the latest interim
+      if (heard) speech.text = heard; // browsers can finish with an empty result: keep what was already heard
     };
+    // A recognition failure is silent while recording: the clip still goes. Without a recording,
+    // recognition was the only voice input, so say why it stopped.
     const failed = code => {
-      if (code === 'aborted' || code === 'no-speech' || session !== s) return;
-      if (s.recorder?.state === 'recording') {
-        voiceError.textContent = 'Transcription isn’t available on this phone while recording. Type below or send the voice clip on its own.';
-        voiceError.hidden = false;
-      } else {
-        stopVoice();
-        showVoiceError(code);
-      }
+      speech.finish();
+      if (code === 'aborted' || code === 'no-speech' || session !== s || s.recorder) return;
+      stopVoice();
+      showVoiceError(code);
     };
     rec.onerror = e => { dlog(`error: ${e.error}`); failed(e.error); };
     rec.onend = () => {
       dlog('end');
-      s.markRecEnded();
-      if (session === s && !s.recorder) stopVoice(); // transcription-only sessions end with it
+      speech.finish();
+      if (session === s && !s.recorder) stopVoice(); // recognition-only sessions end with it
     };
     if (debugLog) {
       for (const ev of ['start', 'audiostart', 'soundstart', 'speechstart', 'speechend', 'nomatch']) rec.addEventListener(ev, () => dlog(ev));
-      rec.addEventListener('result', e => dlog(`result: ${e.results.length} part(s), "${[...e.results].map(r => r[0].transcript).join('').slice(-40)}"`));
+      rec.addEventListener('result', e => dlog(`result: ${e.results.length} part(s)`));
     }
     try { rec.start(); dlog('start() called'); }
-    catch (err) { dlog(`start() threw: ${err?.name}`); s.markRecEnded(); failed(err?.name || 'start-failed'); }
+    catch (err) { dlog(`start() threw: ${err?.name}`); failed(err?.name || 'start-failed'); }
   }
 
-  // Stops recording and transcription. Resolves once the clip (if any) is ready.
-  // abortTranscript drops any late transcript, e.g. when the report is being sent.
-  function stopVoice({ abortTranscript = false } = {}) {
+  // Stops recording; recognition is asked to stop too but may still deliver its last words in the background.
+  // Resolves once the stopped recording (if any) is ready to send.
+  function stopVoice() {
     const s = session;
     if (!s) return Promise.resolve();
     session = null;
@@ -370,8 +360,10 @@
     clearTimeout(s.autoStop);
     s.durationSec = Math.max(1, Math.round((Date.now() - s.startedAt) / 1000));
     setListening(false);
-    if (abortTranscript) s.acceptResults = false;
-    if (s.recognition) { try { abortTranscript ? s.recognition.abort() : s.recognition.stop(); } catch {} }
+    if (s.speech) {
+      s.speech.stoppedAt = Date.now();
+      try { s.discard ? s.speech.recognition.abort() : s.speech.recognition.stop(); } catch {}
+    }
     let recorderDone;
     if (!s.recorder || s.recorder.state === 'inactive') {
       s.stream?.getTracks().forEach(t => t.stop());
@@ -379,66 +371,47 @@
     } else {
       recorderDone = new Promise(resolve => { s.recorder.addEventListener('stop', resolve, { once: true }); s.recorder.stop(); });
     }
-    // Hand the audio session back to alerts once the mic is fully released (late transcript included).
-    const recEnded = Promise.race([s.recEnded, new Promise(r => setTimeout(r, 3000))]);
+    // Hand the audio session back to alerts once the mic is fully released (late recognition included).
+    const recEnded = Promise.race([s.speech?.finished, new Promise(r => setTimeout(r, 3000))]);
     Promise.all([recEnded, recorderDone]).then(() => { if (!session) setAudioSession('playback'); });
-    return recorderDone;
+    return recorderDone.then(() => {
+      if (s.discard || (!s.clip && !s.speech)) return;
+      setPending({ clip: s.clip || null, durationSec: s.durationSec, speech: s.speech || null });
+    });
   }
 
-  // Sends a recorded clip to the server for speech-to-text and appends the text to the box for review.
-  function transcribeOnServer(clip) {
-    listening.textContent = 'Turning your clip into text…';
-    const fail = msg => { if (pendingClip === clip) { voiceError.textContent = msg; voiceError.hidden = false; } };
-    clip.transcribing = (async () => {
-      try {
-        const res = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': clip.mime, 'X-Volunteer-Id': me?.id || '' },
-          body: clip.blob,
-        });
-        const data = await res.json().catch(() => ({}));
-        dlog(`transcribe: ${res.status} ${data.error || `${(data.text || '').length} chars`}`);
-        if (pendingClip !== clip) return; // removed or replaced while transcribing
-        if (data.text) note.value = [note.value.trim(), data.text].filter(Boolean).join(' ');
-        else if (res.ok) fail('No speech was heard in the clip. Type below, or send the clip on its own.');
-        else fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
-      } catch (err) {
-        dlog(`transcribe failed: ${err.message}`);
-        fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
-      } finally {
-        if (!session) setListening(false);
-      }
-    })();
-  }
-
-  // ---- Pending voice clip ----
+  // ---- Stopped recording, waiting to be sent ----
   const clipAudio = new Audio();
   const PLAY_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
   const PAUSE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
-  function setPendingClip(blob, mime, durationSec) {
-    clearPendingClip(); // a new recording replaces the old one
-    pendingClip = { blob, mime, durationSec, url: URL.createObjectURL(blob) };
-    clipAudio.src = pendingClip.url;
+  function setPending(voice) {
+    clearPending(); // a new recording replaces the old one
+    pending = voice;
+    if (voice.clip) clipAudio.src = voice.clip.url = URL.createObjectURL(voice.clip.blob);
     renderClip();
   }
-  function clearPendingClip() {
+  // Takes the recording off the page. Unless it was sent, its transcript is thrown away too.
+  function clearPending({ sent = false } = {}) {
     clipAudio.pause();
-    if (pendingClip) URL.revokeObjectURL(pendingClip.url);
-    pendingClip = null;
+    if (pending?.clip?.url) URL.revokeObjectURL(pending.clip.url);
+    if (!sent && pending?.speech && !pending.speech.done) { try { pending.speech.recognition.abort(); } catch {} }
+    pending = null;
     clipAudio.removeAttribute('src');
     renderClip();
   }
   function renderClip() {
-    clipRow.hidden = !pendingClip;
-    if (!pendingClip) return;
+    clipRow.hidden = !pending;
+    if (!pending) return;
     const playing = !clipAudio.paused;
+    clipPlay.hidden = !pending.clip; // iPhone without server transcription: recognition only, nothing to play
     clipPlay.innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
     clipPlay.setAttribute('aria-label', playing ? 'Pause voice clip' : 'Play voice clip');
-    clipDuration.textContent = fmtTime(pendingClip.durationSec);
+    clipLabel.textContent = pending.clip ? 'Voice clip ready' : 'Voice note ready';
+    clipDuration.textContent = fmtTime(pending.durationSec);
   }
   clipPlay.onclick = () => (clipAudio.paused ? clipAudio.play().catch(() => {}) : clipAudio.pause());
   clipAudio.onplay = clipAudio.onpause = clipAudio.onended = renderClip;
-  clipRemove.onclick = clearPendingClip;
+  clipRemove.onclick = () => clearPending();
   // Name the likely cause, plus the browser's error code, so a failure can be fixed rather than guessed at.
   function showVoiceError(code) {
     const hint = !window.isSecureContext ? 'Voice input needs the https:// link'
@@ -453,33 +426,42 @@
   }
 
   // ---- Reporting ----
+  const newReportId = () => window.crypto?.randomUUID?.() || `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  // Sends straight away. If the phone's recognition is still finishing, its words follow in incident:transcript.
   document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', async () => {
     if (!me) return;
-    await stopVoice({ abortTranscript: true }); // a recording in progress becomes the clip for this report
-    if (pendingClip?.transcribing) { // let the clip's text arrive so the AI can read it
-      reportStatus.textContent = 'Turning your clip into text…';
-      await Promise.race([pendingClip.transcribing, new Promise(r => setTimeout(r, 20000))]);
-    }
+    await stopVoice(); // a recording in progress becomes this report's clip
     const text = note.value.trim();
-    if (b.dataset.report === 'other' && !text && !pendingClip) {
-      reportStatus.textContent = 'Describe the incident or record a voice clip.';
+    const voice = pending;
+    if (b.dataset.report === 'other' && !text && !voice) {
+      reportStatus.textContent = 'Type what’s happening or record a voice clip.';
       return;
     }
-    const clip = pendingClip;
-    const payload = {
-      type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId,
-      reporterId: me.id, note: text || `Reported by ${me.name}`, // server ignores the default text for AI classification
-    };
-    if (clip) payload.audio = { data: await clip.blob.arrayBuffer(), mime: clip.mime, durationSec: clip.durationSec };
+    const reportId = newReportId();
+    const payload = { type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId, reporterId: me.id, note: text, reportId };
+    const speech = voice?.speech;
+    if (speech?.done && speech.text) payload.transcript = speech.text;
+    else if (speech) payload.transcriptPending = true;
+    if (voice?.clip) payload.audio = { data: await voice.clip.blob.arrayBuffer(), mime: voice.clip.mime, durationSec: voice.durationSec };
     socket.emit('incident:report', payload, res => {
-      reportStatus.textContent = res?.error ? res.error
-        : res?.audioError ? `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`
-        : 'Sent to the coordinator.';
-      if (res?.error) return;
-      note.value = '';
-      if (pendingClip === clip) clearPendingClip();
+      if (res?.error) reportStatus.textContent = res.error;
+      else if (res?.audioError) reportStatus.textContent = `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`;
     });
+    reportStatus.textContent = 'Sent to the coordinator.';
+    note.value = '';
+    if (pending === voice) clearPending({ sent: true });
+    if (payload.transcriptPending) sendLateTranscript(reportId, speech);
   }));
+
+  // Sends the phone's words once recognition finishes, or whatever it has heard a few seconds after stopping.
+  function sendLateTranscript(reportId, speech) {
+    const left = Math.max(0, TRANSCRIPT_WAIT_MS - (Date.now() - (speech.stoppedAt || Date.now())));
+    Promise.race([speech.finished, new Promise(r => setTimeout(r, left))]).then(() => {
+      if (!speech.done) { try { speech.recognition.abort(); } catch {} }
+      socket.emit('incident:transcript', { reportId, text: speech.text, unavailable: !speech.text });
+    });
+  }
 </script>
 </body>
 </html>

@@ -102,10 +102,9 @@ input[type=text]:focus, textarea:focus { outline: none; border-color: var(--acce
   min-height: 44px; padding: 0 .25rem; border: 0; background: none; color: var(--accent); font-weight: 700;
 }
 .link-button:hover { text-decoration: underline; }
-.voice-clip { padding: .6rem 0; border-top: 1px solid var(--border); }
-.voice-clip audio { width: 100%; margin: .4rem 0; display: block; }
-.voice-clip .row { align-items: center; justify-content: space-between; }
-label.check { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; min-height: 44px; }
+.report-entry { padding: .6rem 0; border-top: 1px solid var(--border); }
+.report-entry audio { width: 100%; margin: .4rem 0; display: block; }
+.report-entry .row { align-items: center; justify-content: space-between; }label.check { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; min-height: 44px; }
 label.check input { width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--accent); }
 label.check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

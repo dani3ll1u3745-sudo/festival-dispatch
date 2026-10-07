@@ -2,7 +2,8 @@
 // coordinator dispatches, volunteer receives directions. Then a medical incident
 // arrives and the same volunteer is reassigned to it. Then two volunteers are sent
 // to one incident and stood down one at a time, and a volunteer describes an "other"
-// incident. Start the server first.
+// incident, camera sightings come and go, and a voice report's transcript arrives after
+// the report. Start the server first.
 const { io } = require('socket.io-client');
 const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -103,7 +104,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     '| reclassifiedFrom:', other?.reclassifiedFrom, '| reason:', other?.classificationReason);
   console.log('shortlist:', other?.shortlist.map(v => v.name).join(', '));
   const ok4 = !!other && !r5.merged && ['other', 'fire', 'medical', 'overcrowding'].includes(other.type) &&
-    other.shortlist.length > 0 && other.note === 'A child is lost near the food trucks';
+    other.shortlist.length > 0 && other.reports?.[0]?.typedNote === 'A child is lost near the food trucks';
   console.log(ok4 ? 'scenario 4 ok' : 'scenario 4 FAILED');
 
   // ---- Scenario 5: camera fire goes out of view and comes back; closing never silences the camera ----
@@ -136,7 +137,25 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok5 = visibleAtStart && clearedOnCard && backInView && dismissed && alertsAfterFalseAlarm && alertsAfterResolve;
   console.log(ok5 ? 'scenario 5 ok' : `scenario 5 FAILED (dismissed: ${dismissed}, after false alarm: ${alertsAfterFalseAlarm}, after resolve: ${alertsAfterResolve})`);
 
-  const ok = ok1 && ok2 && ok3 && ok4 && ok5;
+  // ---- Scenario 6: a voice report is sent at once and its transcript follows ----
+  console.log('\n-- scenario 6: background transcript --');
+  const reportId = `test-${Date.now()}`;
+  const r6 = await volunteer.emitWithAck('incident:report', {
+    type: 'other', source: 'volunteer', zoneId: 'food-court', reporterId: joined.volunteer.id,
+    note: '', reportId, transcriptPending: true,
+  });
+  await wait(300);
+  const voiceReport = () => incidents.get(r6.id)?.reports?.find(r => r.reportId === reportId);
+  const statusBefore = voiceReport()?.transcriptStatus;
+  volunteer.emit('incident:transcript', { reportId, text: 'A child is lost near the food trucks' });
+  await wait(500);
+  console.log('report:', r6, '| transcript status before/after:', statusBefore, voiceReport()?.transcriptStatus,
+    '| transcript:', voiceReport()?.transcript);
+  const ok6 = statusBefore === 'pending' && voiceReport()?.transcriptStatus === 'done' &&
+    voiceReport()?.transcript === 'A child is lost near the food trucks';
+  console.log(ok6 ? 'scenario 6 ok' : 'scenario 6 FAILED');
+
+  const ok = ok1 && ok2 && ok3 && ok4 && ok5 && ok6;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();
