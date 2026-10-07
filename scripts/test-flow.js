@@ -1,6 +1,7 @@
 // Runs the full flow without any browsers: volunteer joins, camera reports a fire,
 // coordinator dispatches, volunteer receives directions. Then a medical incident
-// arrives and the same volunteer is reassigned to it. Start the server first.
+// arrives and the same volunteer is reassigned to it. Then two volunteers are sent
+// to one incident and stood down one at a time. Start the server first.
 const { io } = require('socket.io-client');
 const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -39,8 +40,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   await wait(500);
   volunteer.emit('assignment:respond', { incidentId: r1.id, status: 'accepted' });
   await wait(300);
-  console.log('incident status:', fire().status, fire().assignmentStatus);
-  const ok1 = assignment && fire().assignmentStatus === 'accepted' && top.name === 'Judge';
+  const judgeOnFire = fire().assignments.find(a => a.volunteerId === joined.volunteer.id);
+  console.log('incident status:', fire().status, judgeOnFire?.status);
+  const ok1 = assignment && judgeOnFire?.status === 'accepted' && top.name === 'Judge';
   console.log(ok1 ? 'scenario 1 ok' : 'scenario 1 FAILED');
 
   // ---- Scenario 2: medical arrives, Judge is reassigned from the fire ----
@@ -62,7 +64,31 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok2 = hasPriya && gotCancelThenNew && fire().status === 'open';
   console.log(ok2 ? 'scenario 2 ok' : `scenario 2 FAILED (Priya in shortlist: ${hasPriya}, cancel then new assignment: ${gotCancelThenNew}, fire reopened: ${fire().status === 'open'})`);
 
-  const ok = ok1 && ok2;
+  // ---- Scenario 3: two volunteers on one incident, stood down one at a time ----
+  console.log('\n-- scenario 3: multiple volunteers --');
+  const r4 = await camera.emitWithAck('incident:report', { type: 'overcrowding', source: 'camera', confidence: 0.8 });
+  await wait(500);
+  const crowd = () => incidents.get(r4.id);
+  const assignedIds = () => crowd().assignments.map(a => a.volunteerId);
+  console.log('dispatch Tom:', await coordinator.emitWithAck('dispatch', { incidentId: r4.id, volunteerId: 'seed-tom' }));
+  console.log('dispatch Priya:', await coordinator.emitWithAck('dispatch', { incidentId: r4.id, volunteerId: 'seed-priya' }));
+  await wait(300);
+  console.log('assigned:', crowd().assignments.map(a => a.name).join(', '), '| status:', crowd().status);
+  const bothOn = assignedIds().includes('seed-tom') && assignedIds().includes('seed-priya') && crowd().status === 'dispatched';
+
+  coordinator.emit('incident:unassign', { incidentId: r4.id, volunteerId: 'seed-tom' });
+  await wait(300);
+  console.log('after removing Tom:', crowd().assignments.map(a => a.name).join(', '), '| status:', crowd().status);
+  const priyaStays = !assignedIds().includes('seed-tom') && assignedIds().includes('seed-priya') && crowd().status === 'dispatched';
+
+  coordinator.emit('incident:unassign', { incidentId: r4.id, volunteerId: 'seed-priya' });
+  await wait(300);
+  console.log('after removing Priya:', crowd().assignments.length, 'assigned | status:', crowd().status);
+  const reopened = crowd().assignments.length === 0 && crowd().status === 'open';
+  const ok3 = bothOn && priyaStays && reopened;
+  console.log(ok3 ? 'scenario 3 ok' : `scenario 3 FAILED (both on: ${bothOn}, Priya stays: ${priyaStays}, reopened: ${reopened})`);
+
+  const ok = ok1 && ok2 && ok3;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();

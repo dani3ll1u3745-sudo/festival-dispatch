@@ -85,10 +85,23 @@ function buildBusyCandidates(incident) {
     .slice(0, 3);
 }
 
+const isQualifiedFor = (v, incident) =>
+  !!v && config.incidentTypes[incident.type].requires.some(q => v.qualifications.includes(q));
+
+// Escalate only when nobody trained is on the incident and nobody trained is free.
 function setCandidates(incident) {
   incident.shortlist = buildShortlist(incident);
   incident.busyCandidates = buildBusyCandidates(incident);
-  incident.needsEscalation = !incident.shortlist.some(v => v.qualified);
+  incident.needsEscalation =
+    !incident.assignments.some(a => isQualifiedFor(volunteers.find(v => v.id === a.volunteerId), incident)) &&
+    !incident.shortlist.some(v => v.qualified);
+}
+
+// Takes one volunteer off an incident; reopens it if nobody is left.
+function removeFromIncident(incident, volunteerId) {
+  incident.assignments = incident.assignments.filter(a => a.volunteerId !== volunteerId);
+  if (incident.status !== 'resolved' && incident.assignments.length === 0) incident.status = 'open';
+  io.emit('incident:updated', incident);
 }
 
 function buildDirectionsUrl(volunteer, incident) {
@@ -111,6 +124,7 @@ function templateRecommendation(incident) {
   }[incident.type];
   return {
     source: 'template',
+    recommendedCount: { fire: 2, medical: 1, overcrowding: 2 }[incident.type],
     summary: `Possible ${label} reported at ${incident.zoneName}.`,
     actions: incident.needsEscalation ? ['No trained volunteer is free: call emergency services', ...actions] : actions,
     volunteers: incident.shortlist.map(v => ({
@@ -152,6 +166,10 @@ async function getRecommendation(incident) {
       currentJob: `${v.currentTypeLabel} at ${v.currentZoneName}`,
       currentJobPriority: v.currentPriority,
     })),
+    alreadyAssigned: incident.assignments.map(a => ({
+      name: a.name,
+      qualifications: (volunteers.find(v => v.id === a.volunteerId)?.qualifications || []).map(q => config.qualifications[q]),
+    })),
     needsEscalation: incident.needsEscalation,
   };
 
@@ -159,8 +177,10 @@ async function getRecommendation(incident) {
     'You assist a volunteer coordinator at a music festival. Given an incident and a shortlist of available ' +
     'volunteers (already filtered by code), respond with ONLY a JSON object, no markdown, in this shape: ' +
     '{"summary": "max 2 short sentences", "actions": ["3 short imperative actions"], ' +
-    '"volunteers": [{"id": "volunteer id from the shortlist", "reason": "max 12 words"}]}. ' +
-    'Rank volunteers best first. Only use ids from the shortlist. Be calm and practical. ' +
+    '"volunteers": [{"id": "volunteer id from the shortlist", "reason": "max 12 words"}], ' +
+    '"recommendedCount": 1}. ' +
+    'recommendedCount is an integer from 1 to 3: how many volunteers to send in total, counting anyone in ' +
+    'alreadyAssigned. Rank volunteers best first. Only use ids from the shortlist. Be calm and practical. ' +
     'Incident priority: 1 is most urgent. ' +
     'If no shortlisted volunteer is qualified, you may recommend reassigning a busy volunteer from a less urgent ' +
     'incident, naming them and their current job. If no suitable volunteer is available at all, include calling ' +
@@ -181,7 +201,9 @@ async function getRecommendation(incident) {
     const validIds = new Set(incident.shortlist.map(v => v.id));
     const vols = (parsed.volunteers || []).filter(v => validIds.has(v.id));
     if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.actions)) throw new Error('Bad AI shape');
-    return { source: 'ai', summary: parsed.summary, actions: parsed.actions.slice(0, 4), volunteers: vols };
+    const count = Number.isInteger(parsed.recommendedCount)
+      ? Math.min(3, Math.max(1, parsed.recommendedCount)) : fallback.recommendedCount;
+    return { source: 'ai', recommendedCount: count, summary: parsed.summary, actions: parsed.actions.slice(0, 4), volunteers: vols };
   } catch (err) {
     console.warn('[ai] falling back to template:', err.message);
     return fallback;
@@ -229,9 +251,8 @@ function handleReport(raw = {}) {
     createdAt: now,
     lastSeen: now,
     reportCount: 1,
-    status: 'open', // open -> dispatched -> resolved
-    assignedVolunteerId: null,
-    assignmentStatus: null, // sent -> accepted -> arrived
+    status: 'open', // open (nobody assigned) <-> dispatched (1+ assigned) -> resolved
+    assignments: [], // { volunteerId, name, status: sent -> accepted -> arrived, assignedAt }
     shortlist: [],
     busyCandidates: [],
     needsEscalation: false,
@@ -250,9 +271,10 @@ function handleReport(raw = {}) {
   return { id: incident.id, merged: false };
 }
 
+// Refreshes every unresolved incident, so more people can be added to one that already has someone.
 function refreshOpenShortlists() {
   incidents
-    .filter(i => i.status === 'open')
+    .filter(i => i.status !== 'resolved')
     .forEach(i => {
       setCandidates(i);
       io.emit('incident:updated', i);
@@ -323,13 +345,8 @@ io.on('connection', socket => {
   socket.on('volunteer:leave', ({ id } = {}) => {
     const v = volunteers.find(x => x.id === id);
     if (!v || String(v.id).startsWith('seed-')) return;
-    const inc = incidents.find(i => i.assignedVolunteerId === v.id && i.status !== 'resolved');
-    if (inc) {
-      inc.status = 'open';
-      inc.assignedVolunteerId = null;
-      inc.assignmentStatus = null;
-      io.emit('incident:updated', inc);
-    }
+    const inc = incidents.find(i => i.status !== 'resolved' && i.assignments.some(a => a.volunteerId === v.id));
+    if (inc) removeFromIncident(inc, v.id);
     volunteers.splice(volunteers.indexOf(v), 1);
     console.log(`[volunteer] ${v.name} left`);
     broadcastVolunteers();
@@ -340,31 +357,20 @@ io.on('connection', socket => {
     const inc = incidents.find(i => i.id === incidentId);
     const v = volunteers.find(x => x.id === volunteerId);
     if (!inc || !v) return typeof ack === 'function' && ack({ error: 'Incident or volunteer not found' });
-
-    // If this incident was already assigned to someone else, free them.
-    const previous = volunteers.find(x => x.id === inc.assignedVolunteerId);
-    if (previous && previous !== v) {
-      previous.status = 'available';
-      previous.assignment = null;
-      if (previous.socketId) io.to(previous.socketId).emit('assignment:cancelled', { incidentId });
+    if (inc.assignments.some(a => a.volunteerId === v.id)) {
+      return typeof ack === 'function' && ack({ error: 'Already assigned to this incident' });
     }
 
-    // If this volunteer is being pulled off another incident, reopen that one.
+    // If this volunteer is being pulled off another incident, take them off that one.
     const oldId = v.assignment?.incidentId;
     if (oldId && oldId !== inc.id) {
       const oldInc = incidents.find(i => i.id === oldId);
-      if (oldInc && oldInc.status !== 'resolved') {
-        oldInc.status = 'open';
-        oldInc.assignedVolunteerId = null;
-        oldInc.assignmentStatus = null;
-        io.emit('incident:updated', oldInc);
-      }
+      if (oldInc) removeFromIncident(oldInc, v.id);
       if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId: oldId, reassigned: true });
     }
 
     inc.status = 'dispatched';
-    inc.assignedVolunteerId = v.id;
-    inc.assignmentStatus = 'sent';
+    inc.assignments.push({ volunteerId: v.id, name: v.name, status: 'sent', assignedAt: Date.now() });
     v.status = 'assigned';
     v.assignment = {
       incidentId: inc.id,
@@ -387,19 +393,36 @@ io.on('connection', socket => {
   socket.on('assignment:respond', ({ incidentId, status } = {}) => {
     const inc = incidents.find(i => i.id === incidentId);
     const v = volunteers.find(x => x.id === socket.data.volunteerId);
-    if (!inc || !v || !['accepted', 'arrived'].includes(status)) return;
-    inc.assignmentStatus = status;
+    const entry = inc?.assignments.find(a => a.volunteerId === v?.id);
+    if (!entry || !['accepted', 'arrived'].includes(status)) return;
+    entry.status = status;
     if (v.assignment) v.assignment.status = status;
     io.emit('incident:updated', inc);
     broadcastVolunteers();
+  });
+
+  // Coordinator stands one volunteer down; anyone else on the incident stays.
+  socket.on('incident:unassign', ({ incidentId, volunteerId } = {}) => {
+    const inc = incidents.find(i => i.id === incidentId);
+    const v = volunteers.find(x => x.id === volunteerId);
+    if (!inc || !inc.assignments.some(a => a.volunteerId === volunteerId)) return;
+    removeFromIncident(inc, volunteerId);
+    if (v) {
+      v.status = 'available';
+      v.assignment = null;
+      if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId, standDown: true });
+    }
+    broadcastVolunteers();
+    refreshOpenShortlists();
   });
 
   socket.on('incident:resolve', ({ incidentId } = {}) => {
     const inc = incidents.find(i => i.id === incidentId);
     if (!inc) return;
     inc.status = 'resolved';
-    const v = volunteers.find(x => x.id === inc.assignedVolunteerId);
-    if (v) {
+    for (const a of inc.assignments) {
+      const v = volunteers.find(x => x.id === a.volunteerId);
+      if (!v) continue;
       v.status = 'available';
       v.assignment = null;
       if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId, resolved: true });

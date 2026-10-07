@@ -77,13 +77,7 @@
   }
 
   const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
-  const statusText = i => {
-    if (i.status === 'resolved') return 'Resolved';
-    if (i.status === 'open') return 'Waiting for dispatch';
-    const v = volunteers.find(x => x.id === i.assignedVolunteerId);
-    const who = v ? v.name : 'Volunteer';
-    return { sent: `${who} notified`, accepted: `${who} is on the way`, arrived: `${who} has arrived` }[i.assignmentStatus] || 'Dispatched';
-  };
+  const assignmentLabel = { sent: 'Notified', accepted: 'On the way', arrived: 'Arrived' };
 
   function incidentCard(i) {
     const rec = i.recommendation;
@@ -97,6 +91,19 @@
     const sources = i.sources.map(s => (s === 'camera' ? 'Camera' : 'Volunteer report')).join(' + ');
     const conf = i.confidence != null && i.sources.includes('camera') ? `, ${(i.confidence * 100).toFixed(0)}% confidence` : '';
 
+    const assigned = i.assignments || [];
+    const assignedSection = i.status === 'resolved' ? '<p><strong>Resolved</strong></p>' : `
+      <h3 style="margin-top:.8rem">Assigned (${assigned.length}${rec ? ` of ${rec.recommendedCount} recommended` : ''})</h3>
+      ${assigned.length ? assigned.map(a => `
+      <div class="candidate">
+        <div>
+          <h3>${esc(a.name)}</h3>
+          <p class="small muted">${assignmentLabel[a.status] || esc(a.status)}</p>
+        </div>
+        <button class="secondary" data-unassign="${i.id}" data-vol="${a.volunteerId}"
+          data-confirm="${esc(`Stand ${a.name} down from this incident?`)}">Remove</button>
+      </div>`).join('') : '<p class="small muted">Waiting for dispatch</p>'}`;
+
     const candidates = i.status === 'resolved' ? '' : shortlist.length ? shortlist.map(v => `
       <div class="candidate">
         <div>
@@ -104,16 +111,14 @@
           <p class="small muted">${esc(reasons.get(v.id) || `${qualNames(v.qualifications)}; ${v.distance} m away`)}</p>
           ${v.qualified ? '' : '<p class="small" style="color: var(--hivis)">No matching qualification</p>'}
         </div>
-        <button data-dispatch="${i.id}" data-vol="${v.id}" ${i.assignedVolunteerId === v.id ? 'disabled' : ''}>
-          ${i.assignedVolunteerId === v.id ? 'Sent' : 'Dispatch'}
-        </button>
+        <button data-dispatch="${i.id}" data-vol="${v.id}">${assigned.length ? 'Add' : 'Dispatch'}</button>
       </div>`).join('') : '<p class="small muted">No available volunteers.</p>';
 
     const open = i.status !== 'resolved';
     const num = esc(config.emergencyNumber);
     const callLink = cls => `<a class="button ${cls}" href="tel:${num}" data-call>Call ${num}</a>`;
-    // needsEscalation is only recalculated while open, so ignore it once someone has been sent.
-    const escalating = i.status === 'open' && i.needsEscalation;
+    // The server keeps needsEscalation current for every unresolved incident, counting who is already assigned.
+    const escalating = open && i.needsEscalation;
     const escalation = escalating ? `
       <div style="border: 2px solid var(--fire); border-radius: 8px; padding: .75rem; margin: .6rem 0; display: grid; gap: .5rem;">
         <h3>No trained volunteer available</h3>
@@ -149,9 +154,10 @@
           <ul class="small">${rec.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
           <p class="small muted">${rec.source === 'ai' ? 'AI recommendation' : 'Standard procedure (AI unavailable)'}</p>
         ` : '<p class="small muted">Getting recommendation…</p>'}
-        <p><strong>${statusText(i)}</strong></p>
+        ${assignedSection}
         ${fireCall}
         ${escalation}
+        ${open ? '<h3 style="margin-top:.8rem">Available volunteers</h3>' : ''}
         ${candidates}
         ${busy}
         ${i.status !== 'resolved' ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
@@ -182,9 +188,14 @@
     if (d && (!d.dataset.confirm || confirm(d.dataset.confirm))) {
       d.disabled = true;
       socket.emit('dispatch', { incidentId: d.dataset.dispatch, volunteerId: d.dataset.vol }, res => {
-        if (res?.error) alert(res.error);
+        if (res?.error) { alert(res.error); d.disabled = false; }
         else if (!res.delivered) showBanner('Assigned, but that volunteer has no phone connected', 'medical');
       });
+    }
+    const u = e.target.closest('[data-unassign]');
+    if (u && confirm(u.dataset.confirm)) {
+      u.disabled = true;
+      socket.emit('incident:unassign', { incidentId: u.dataset.unassign, volunteerId: u.dataset.vol });
     }
     const r = e.target.closest('[data-resolve]');
     if (r) socket.emit('incident:resolve', { incidentId: r.dataset.resolve });
