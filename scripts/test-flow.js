@@ -161,9 +161,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const spare = await volunteer.emitWithAck('volunteer:join', { name: 'Spare', qualifications: ['first_aid'] });
   await wait(300);
   const p1 = await camera.emitWithAck('incident:report', { type: 'medical', source: 'camera', zoneId: 'first-aid-tent', manual: true, confidence: 1 });
-  await wait(1500); // the plan arrives with the recommendation
   const med = () => incidents.get(p1.id);
-  const steps = () => (med().recommendation?.options || []).flatMap(o => o.plan);
+  const steps = () => (med()?.recommendation?.options || []).flatMap(o => o.plan);
+  // The plan arrives with the recommendation: within seconds from the AI, at once from the template.
+  for (let t = 0; t < 20000 && !steps().some(a => a.kind === 'dispatch'); t += 250) await wait(250);
   const step = steps().find(a => a.kind === 'dispatch');
   console.log('plan:', steps().map(a => `${a.kind} ${a.volunteerName || ''}`).join(', '));
   // Make the planned volunteer busy elsewhere, so the step is stale when it runs.
