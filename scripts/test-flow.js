@@ -1,7 +1,8 @@
 // Runs the full flow without any browsers: volunteer joins, camera reports a fire,
 // coordinator dispatches, volunteer receives directions. Then a medical incident
 // arrives and the same volunteer is reassigned to it. Then two volunteers are sent
-// to one incident and stood down one at a time. Start the server first.
+// to one incident and stood down one at a time, and a volunteer describes an "other"
+// incident. Start the server first.
 const { io } = require('socket.io-client');
 const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -88,37 +89,54 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok3 = bothOn && priyaStays && reopened;
   console.log(ok3 ? 'scenario 3 ok' : `scenario 3 FAILED (both on: ${bothOn}, Priya stays: ${priyaStays}, reopened: ${reopened})`);
 
-  // ---- Scenario 4: camera fire goes out of view and comes back; closing never silences the camera ----
-  console.log('\n-- scenario 4: camera status, false alarm and resolve --');
+  // ---- Scenario 4: volunteer describes an "other" incident ----
+  // With AI on it may be reclassified, so only check that a sensible incident with candidates exists.
+  console.log('\n-- scenario 4: described "other" incident --');
+  const r5 = await volunteer.emitWithAck('incident:report', {
+    type: 'other', source: 'volunteer', zoneId: 'food-court', reporterId: joined.volunteer.id,
+    note: 'A child is lost near the food trucks',
+  });
+  console.log('report:', r5);
+  await wait(10000); // classification and recommendation, if the AI is on
+  const other = incidents.get(r5.id);
+  console.log('incident:', other?.type, `"${other?.typeLabel}"`, 'priority', other?.priority,
+    '| reclassifiedFrom:', other?.reclassifiedFrom, '| reason:', other?.classificationReason);
+  console.log('shortlist:', other?.shortlist.map(v => v.name).join(', '));
+  const ok4 = !!other && !r5.merged && ['other', 'fire', 'medical', 'overcrowding'].includes(other.type) &&
+    other.shortlist.length > 0 && other.note === 'A child is lost near the food trucks';
+  console.log(ok4 ? 'scenario 4 ok' : 'scenario 4 FAILED');
+
+  // ---- Scenario 5: camera fire goes out of view and comes back; closing never silences the camera ----
+  console.log('\n-- scenario 5: camera status, false alarm and resolve --');
   const auto = { type: 'fire', source: 'camera', zoneId: 'gate-a', confidence: 0.7 };
-  const r5 = await camera.emitWithAck('incident:report', auto);
+  const cam1 = await camera.emitWithAck('incident:report', auto);
   await wait(300);
-  const gateFire = () => incidents.get(r5.id);
+  const gateFire = () => incidents.get(cam1.id);
   const visibleAtStart = gateFire().camera?.visible === true;
   camera.emit('camera:status', { type: 'fire', zoneId: 'gate-a', visible: false });
   await wait(300);
   const clearedOnCard = gateFire().camera?.visible === false;
   // Back in view more than a minute later would still merge; this checks the merge itself.
-  const r6 = await camera.emitWithAck('incident:report', auto);
+  const cam2 = await camera.emitWithAck('incident:report', auto);
   await wait(300);
-  const backInView = r6.id === r5.id && r6.merged && gateFire().camera?.visible === true;
+  const backInView = cam2.id === cam1.id && cam2.merged && gateFire().camera?.visible === true;
   console.log('camera visible / cleared / back in view:', visibleAtStart, clearedOnCard, backInView);
 
   // Closing an incident never silences the camera: the next sighting raises a new alert.
-  coordinator.emit('incident:dismiss', { incidentId: r5.id });
+  coordinator.emit('incident:dismiss', { incidentId: cam1.id });
   await wait(300);
   const dismissed = gateFire().status === 'resolved' && gateFire().outcome === 'false_alarm';
-  const r7 = await camera.emitWithAck('incident:report', auto);
-  const alertsAfterFalseAlarm = !!r7.id && !r7.merged && r7.id !== r5.id;
-  coordinator.emit('incident:resolve', { incidentId: r7.id });
+  const cam3 = await camera.emitWithAck('incident:report', auto);
+  const alertsAfterFalseAlarm = !!cam3.id && !cam3.merged && cam3.id !== cam1.id;
+  coordinator.emit('incident:resolve', { incidentId: cam3.id });
   await wait(300);
-  const r8 = await camera.emitWithAck('incident:report', auto);
-  const alertsAfterResolve = !!r8.id && !r8.merged && r8.id !== r7.id;
-  console.log('after false alarm:', r7, '| after resolve:', r8);
-  const ok4 = visibleAtStart && clearedOnCard && backInView && dismissed && alertsAfterFalseAlarm && alertsAfterResolve;
-  console.log(ok4 ? 'scenario 4 ok' : `scenario 4 FAILED (dismissed: ${dismissed}, after false alarm: ${alertsAfterFalseAlarm}, after resolve: ${alertsAfterResolve})`);
+  const cam4 = await camera.emitWithAck('incident:report', auto);
+  const alertsAfterResolve = !!cam4.id && !cam4.merged && cam4.id !== cam3.id;
+  console.log('after false alarm:', cam3, '| after resolve:', cam4);
+  const ok5 = visibleAtStart && clearedOnCard && backInView && dismissed && alertsAfterFalseAlarm && alertsAfterResolve;
+  console.log(ok5 ? 'scenario 5 ok' : `scenario 5 FAILED (dismissed: ${dismissed}, after false alarm: ${alertsAfterFalseAlarm}, after resolve: ${alertsAfterResolve})`);
 
-  const ok = ok1 && ok2 && ok3 && ok4;
+  const ok = ok1 && ok2 && ok3 && ok4 && ok5;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();

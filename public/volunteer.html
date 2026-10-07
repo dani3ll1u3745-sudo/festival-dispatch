@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Volunteer | MaydAI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <meta name="theme-color" content="#ffffff">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+  <meta name="theme-color" content="#f4f6f8">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="vol">
 
 <!-- Assignment alert -->
 <div class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle">
@@ -38,17 +38,15 @@
 </div>
 
 <div class="page">
-  <div class="topbar">
-    <div>
-      <h1>MaydAI</h1>
-      <p class="muted small" id="festival"></p>
-    </div>
+  <header class="vol-top">
+    <h1>MaydAI</h1>
     <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
-  </div>
+  </header>
 
   <!-- Join -->
   <section id="joinView" hidden>
     <div class="panel">
+      <p class="small slate" id="festival"></p>
       <h2>Join the volunteer team</h2>
       <label for="volName" class="muted small">Your name</label>
       <input type="text" id="volName" autocomplete="given-name" placeholder="First name">
@@ -61,24 +59,39 @@
 
   <!-- On shift -->
   <section id="shiftView" hidden>
-    <div class="panel">
-      <h2 id="hello"></h2>
-      <p id="post" class="muted"></p>
-      <p id="standby" style="margin-top:.5rem"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
-      <button class="secondary full" id="showAssignment" hidden style="margin-top:.75rem">View current assignment</button>
+    <div class="vol-who">
+      <p class="who-name" id="hello"></p>
+      <p class="slate" id="post"></p>
+      <p id="standby"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
+      <button class="secondary full" id="showAssignment" hidden>View current assignment</button>
     </div>
-    <div class="panel">
-      <h2>Report an incident</h2>
-      <p class="muted small">Reports go straight to the coordinator.</p>
-      <input type="text" id="note" placeholder="What's happening? (optional)" style="margin: .5rem 0;">
-      <div class="row">
-        <button class="danger" data-report="fire">Fire</button>
-        <button class="secondary" data-report="medical">Medical</button>
-        <button class="secondary" data-report="overcrowding">Overcrowding</button>
+
+    <!-- Report stage -->
+    <div class="stage">
+      <button class="mic" id="micBtn" type="button" aria-label="Start voice input" aria-pressed="false">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+      </button>
+      <p class="stage-label" id="listening">Tap to describe what's happening</p>
+      <p class="stage-hint" id="stageHint">Your voice clip goes to the coordinator.</p>
+      <p class="small warn" id="voiceError" hidden>Voice input unavailable, please type instead</p>
+      <textarea id="note" rows="3" placeholder="Or type what's happening" aria-label="What's happening"></textarea>
+      <div class="clip-row" id="clipRow" hidden>
+        <button class="secondary" id="clipPlay" type="button" aria-label="Play voice clip"></button>
+        <span id="clipDuration"></span>
+        <button class="link-button" id="clipRemove" type="button">Remove clip</button>
       </div>
-      <p class="small" id="reportStatus" style="margin-top:.5rem"></p>
+      <div class="report-grid">
+        <button class="report fire" data-report="fire">Report fire</button>
+        <button class="report medical" data-report="medical">Report medical</button>
+        <button class="report overcrowding" data-report="overcrowding">Report crowding</button>
+        <button class="report other" data-report="other">Report other</button>
+      </div>
+      <p class="report-status" id="reportStatus" role="status"></p>
     </div>
-    <button class="secondary full" id="leaveBtn">Leave shift</button>
+
+    <div class="vol-section">
+      <button class="link-button slate-link" id="leaveBtn">Leave shift</button>
+    </div>
   </section>
 </div>
 
@@ -113,12 +126,14 @@
   socket.on('state', s => {
     config = s.config;
     festival.textContent = config.festivalName;
+    updateStageHint();
     quals.innerHTML = Object.entries(config.qualifications).map(([k, label]) =>
       `<label class="check"><input type="checkbox" value="${k}"> ${FD.esc(label)}</label>`).join('') +
       '<label class="check"><input type="checkbox" data-none> None yet</label>'; // UI-only, never sent
     if (!storedId()) showJoin();
   });
 
+  socket.on('transcription:ready', () => { if (config) { config.transcriptionEnabled = true; updateStageHint(); } });
   socket.on('assignment', a => showAlert(a, true));
   socket.on('assignment:cancelled', ({ resolved, reassigned, standDown, falseAlarm }) => {
     assignment = null;
@@ -133,8 +148,9 @@
   function showJoin() { joinView.hidden = false; shiftView.hidden = true; }
   function showShift() {
     joinView.hidden = true; shiftView.hidden = false;
-    hello.textContent = `On shift: ${me.name}`;
-    post.textContent = `Your post: ${config?.zones[me.zoneId]?.name || me.zoneId}`;
+    hello.textContent = `${me.name}, posted at ${config?.zones[me.zoneId]?.name || me.zoneId}`;
+    const trained = (me.qualifications || []).map(q => config?.qualifications[q] || q);
+    post.textContent = trained.length ? `Trained in ${trained.join(', ')}` : 'Trained in: none';
   }
 
   joinBtn.onclick = () => {
@@ -154,6 +170,10 @@
   resumeBtn.onclick = () => { FD.unlockAudio(); resume.hidden = true; };
   leaveBtn.onclick = () => {
     if (!me || !confirm('Leave your shift?')) return;
+    if (session) session.discardClip = true;
+    stopVoice({ abortTranscript: true });
+    clearPendingClip();
+    note.value = '';
     socket.emit('volunteer:leave', { id: me.id });
     storeId(null);
     me = null; assignment = null;
@@ -198,15 +218,266 @@
   hideBtn.onclick = () => alertEl.classList.remove('show');
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
+  // ---- Voice input ----
+  // With a speech-to-text key on the server, every phone just records a clip and the server transcribes it.
+  // Without one, the browser transcribes live: alongside recording where it can, transcription only on
+  // iPhone Safari (recording and transcription compete for the mic there), recording only where it can't.
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const recordSupported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  const serverTranscribes = () => recordSupported && !!config?.transcriptionEnabled;
+  const voiceMode = () => serverTranscribes() ? { record: true, transcribe: false }
+    : { record: recordSupported && !(isIOS && SpeechRecognition), transcribe: !!SpeechRecognition };
+  const updateStageHint = () => { stageHint.hidden = !voiceMode().record; }; // no clip without recording
+  const MAX_SECONDS = 60;
+  const MIC_ICON = micBtn.querySelector('svg').outerHTML;
+  const STOP_ICON = '<svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  let session = null;     // the recording/transcribing in progress: { stream, recorder, recognition, startedAt, ... }
+  let lastSession = null; // still allowed to deliver its final transcript after a tap-to-stop
+  let pendingClip = null; // { blob, mime, durationSec, url }
+
+  function setListening(on, s) {
+    if (micBtn.classList.contains('recording') !== on) micBtn.innerHTML = on ? STOP_ICON : MIC_ICON;
+    micBtn.classList.toggle('recording', on);
+    micBtn.setAttribute('aria-label', on ? 'Stop voice input' : 'Start voice input');
+    micBtn.setAttribute('aria-pressed', String(on));
+    listening.textContent = !on ? 'Tap to describe what’s happening'
+      : s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}. Tap to stop.` : 'Listening… Tap to stop.';
+  }
+
+  updateStageHint();
+  if (!SpeechRecognition && !recordSupported) {
+    micBtn.style.display = 'none'; // .button's display rule overrides the hidden attribute
+    listening.hidden = true;
+  } else {
+    micBtn.onclick = () => (session ? stopVoice() : startVoice());
+  }
+
+  // iOS: FD.unlockAudio sets the audio session to 'playback' so alerts sound in silent mode, but that
+  // session can't use the microphone. Switch to 'play-and-record' while listening, then back.
+  const setAudioSession = type => {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {}
+    dlog(`audioSession: ${navigator.audioSession ? navigator.audioSession.type : 'n/a'}`);
+  };
+
+  // On-screen event log for debugging on a phone without dev tools: open the page with ?debug=1.
+  const debugLog = new URLSearchParams(location.search).has('debug') ? document.createElement('pre') : null;
+  if (debugLog) {
+    debugLog.style.cssText = 'white-space:pre-wrap;font-size:12px;text-align:left;background:#fff;border:1px solid var(--rule);padding:.5rem;max-height:40vh;overflow:auto;margin-top:1rem;width:100%';
+    document.querySelector('.stage').append(debugLog);
+  }
+  function dlog(msg) {
+    if (!debugLog) return;
+    debugLog.textContent += `${new Date().toLocaleTimeString()} ${msg}\n`;
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+  dlog(`iOS: ${isIOS}, SpeechRecognition: ${!!SpeechRecognition}, recording: ${recordSupported}`);
+
+  async function startVoice() {
+    voiceError.hidden = true;
+    if (lastSession) lastSession.acceptResults = false;
+    const mode = voiceMode();
+    const s = session = lastSession = { startedAt: Date.now(), acceptResults: true, ...mode };
+    s.recEnded = new Promise(r => { s.markRecEnded = r; });
+    if (!s.transcribe) s.markRecEnded();
+    dlog(`mode: record ${s.record}, browser transcription ${s.transcribe}, server transcription ${serverTranscribes()}`);
+    setAudioSession('play-and-record');
+    setListening(true, s);
+    if (s.record) {
+      try {
+        // Echo cancellation puts iPhones into phone-call voice mode (16 kHz, very quiet), which wrecks
+        // transcription. Ask for the plain microphone with automatic gain, and a decent bitrate.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
+        });
+        if (session !== s) { stream.getTracks().forEach(t => t.stop()); return; } // stopped while asking permission
+        dlog(`mic settings: ${JSON.stringify(stream.getAudioTracks()[0]?.getSettings?.() || {})}`);
+        const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
+        const recorder = new MediaRecorder(stream, { ...(mime && { mimeType: mime }), audioBitsPerSecond: 128000 });
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          const type = recorder.mimeType || mime || 'audio/webm';
+          const blob = new Blob(chunks, { type });
+          dlog(`clip: ${blob.size} bytes, ${type}`);
+          if (!blob.size || s.discardClip) return;
+          setPendingClip(blob, type, s.durationSec);
+          if (serverTranscribes()) transcribeOnServer(pendingClip);
+        };
+        recorder.start(); // recorder first, then transcription
+        Object.assign(s, { stream, recorder, startedAt: Date.now() });
+      } catch (err) {
+        s.recordError = err; // no mic access for recording: transcription alone will report its own error
+      }
+    }
+    if (session !== s) return;
+    if (s.transcribe) startRecognition(s);
+    else if (!s.recorder) { stopVoice(); showVoiceError(s.recordError?.name || 'not-allowed'); return; }
+    else if (!serverTranscribes()) {
+      // Recording works but this browser can't transcribe (e.g. Chrome on iPhone): say so rather than stay silent.
+      voiceError.textContent = 'This browser can’t turn speech into text, but your voice clip will still go to the coordinator. On iPhone, Safari can transcribe.';
+      voiceError.hidden = false;
+    }
+    s.timer = setInterval(() => setListening(true, s), 500);
+    s.autoStop = setTimeout(() => { if (session === s) stopVoice(); }, MAX_SECONDS * 1000);
+  }
+
+  function startRecognition(s) {
+    const base = note.value.trim(); // spoken text is appended to what's already typed
+    const rec = s.recognition = new SpeechRecognition();
+    rec.lang = 'en-AU';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.onresult = e => {
+      if (!s.acceptResults) return; // a stopped or sent session can't refill the box
+      const spoken = [...e.results].map(r => r[0].transcript).join('').trim();
+      if (!spoken) return; // browsers can finish with an empty result: never wipe what was already heard
+      note.value = [base, spoken].filter(Boolean).join(' ');
+    };
+    const failed = code => {
+      if (code === 'aborted' || code === 'no-speech' || session !== s) return;
+      if (s.recorder?.state === 'recording') {
+        voiceError.textContent = 'Transcription isn’t available on this phone while recording. Type below or send the voice clip on its own.';
+        voiceError.hidden = false;
+      } else {
+        stopVoice();
+        showVoiceError(code);
+      }
+    };
+    rec.onerror = e => { dlog(`error: ${e.error}`); failed(e.error); };
+    rec.onend = () => {
+      dlog('end');
+      s.markRecEnded();
+      if (session === s && !s.recorder) stopVoice(); // transcription-only sessions end with it
+    };
+    if (debugLog) {
+      for (const ev of ['start', 'audiostart', 'soundstart', 'speechstart', 'speechend', 'nomatch']) rec.addEventListener(ev, () => dlog(ev));
+      rec.addEventListener('result', e => dlog(`result: ${e.results.length} part(s), "${[...e.results].map(r => r[0].transcript).join('').slice(-40)}"`));
+    }
+    try { rec.start(); dlog('start() called'); }
+    catch (err) { dlog(`start() threw: ${err?.name}`); s.markRecEnded(); failed(err?.name || 'start-failed'); }
+  }
+
+  // Stops recording and transcription. Resolves once the clip (if any) is ready.
+  // abortTranscript drops any late transcript, e.g. when the report is being sent.
+  function stopVoice({ abortTranscript = false } = {}) {
+    const s = session;
+    if (!s) return Promise.resolve();
+    session = null;
+    clearInterval(s.timer);
+    clearTimeout(s.autoStop);
+    s.durationSec = Math.max(1, Math.round((Date.now() - s.startedAt) / 1000));
+    setListening(false);
+    if (abortTranscript) s.acceptResults = false;
+    if (s.recognition) { try { abortTranscript ? s.recognition.abort() : s.recognition.stop(); } catch {} }
+    let recorderDone;
+    if (!s.recorder || s.recorder.state === 'inactive') {
+      s.stream?.getTracks().forEach(t => t.stop());
+      recorderDone = Promise.resolve();
+    } else {
+      recorderDone = new Promise(resolve => { s.recorder.addEventListener('stop', resolve, { once: true }); s.recorder.stop(); });
+    }
+    // Hand the audio session back to alerts once the mic is fully released (late transcript included).
+    const recEnded = Promise.race([s.recEnded, new Promise(r => setTimeout(r, 3000))]);
+    Promise.all([recEnded, recorderDone]).then(() => { if (!session) setAudioSession('playback'); });
+    return recorderDone;
+  }
+
+  // Sends a recorded clip to the server for speech-to-text and appends the text to the box for review.
+  function transcribeOnServer(clip) {
+    listening.textContent = 'Turning your clip into text…';
+    const fail = msg => { if (pendingClip === clip) { voiceError.textContent = msg; voiceError.hidden = false; } };
+    clip.transcribing = (async () => {
+      try {
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': clip.mime, 'X-Volunteer-Id': me?.id || '' },
+          body: clip.blob,
+        });
+        const data = await res.json().catch(() => ({}));
+        dlog(`transcribe: ${res.status} ${data.error || `${(data.text || '').length} chars`}`);
+        if (pendingClip !== clip) return; // removed or replaced while transcribing
+        if (data.text) note.value = [note.value.trim(), data.text].filter(Boolean).join(' ');
+        else if (res.ok) fail('No speech was heard in the clip. Type below, or send the clip on its own.');
+        else fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
+      } catch (err) {
+        dlog(`transcribe failed: ${err.message}`);
+        fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
+      } finally {
+        if (!session) setListening(false);
+      }
+    })();
+  }
+
+  // ---- Pending voice clip ----
+  const clipAudio = new Audio();
+  const PLAY_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  const PAUSE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+  function setPendingClip(blob, mime, durationSec) {
+    clearPendingClip(); // a new recording replaces the old one
+    pendingClip = { blob, mime, durationSec, url: URL.createObjectURL(blob) };
+    clipAudio.src = pendingClip.url;
+    renderClip();
+  }
+  function clearPendingClip() {
+    clipAudio.pause();
+    if (pendingClip) URL.revokeObjectURL(pendingClip.url);
+    pendingClip = null;
+    clipAudio.removeAttribute('src');
+    renderClip();
+  }
+  function renderClip() {
+    clipRow.hidden = !pendingClip;
+    if (!pendingClip) return;
+    const playing = !clipAudio.paused;
+    clipPlay.innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+    clipPlay.setAttribute('aria-label', playing ? 'Pause voice clip' : 'Play voice clip');
+    clipDuration.textContent = fmtTime(pendingClip.durationSec);
+  }
+  clipPlay.onclick = () => (clipAudio.paused ? clipAudio.play().catch(() => {}) : clipAudio.pause());
+  clipAudio.onplay = clipAudio.onpause = clipAudio.onended = renderClip;
+  clipRemove.onclick = clearPendingClip;
+  // Name the likely cause, plus the browser's error code, so a failure can be fixed rather than guessed at.
+  function showVoiceError(code) {
+    const hint = !window.isSecureContext ? 'Voice input needs the https:// link'
+      : {
+        'not-allowed': 'Microphone access is blocked for this site. Allow it in the browser’s site settings',
+        'service-not-allowed': 'Voice input is turned off on this device (on iPhone: turn on Settings > General > Keyboard > Enable Dictation, and Siri)',
+        'network': 'The browser couldn’t reach its speech service',
+        'audio-capture': 'No microphone was found',
+      }[code] || 'Voice input unavailable';
+    voiceError.textContent = `${hint}. Please type instead. (${code})`;
+    voiceError.hidden = false;
+  }
+
   // ---- Reporting ----
-  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', async () => {
     if (!me) return;
-    socket.emit('incident:report', {
+    await stopVoice({ abortTranscript: true }); // a recording in progress becomes the clip for this report
+    if (pendingClip?.transcribing) { // let the clip's text arrive so the AI can read it
+      reportStatus.textContent = 'Turning your clip into text…';
+      await Promise.race([pendingClip.transcribing, new Promise(r => setTimeout(r, 20000))]);
+    }
+    const text = note.value.trim();
+    if (b.dataset.report === 'other' && !text && !pendingClip) {
+      reportStatus.textContent = 'Describe the incident or record a voice clip.';
+      return;
+    }
+    const clip = pendingClip;
+    const payload = {
       type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId,
-      reporterId: me.id, note: note.value.trim() || `Reported by ${me.name}`,
-    }, res => {
-      reportStatus.textContent = res?.error ? res.error : 'Sent to the coordinator.';
+      reporterId: me.id, note: text || `Reported by ${me.name}`, // server ignores the default text for AI classification
+    };
+    if (clip) payload.audio = { data: await clip.blob.arrayBuffer(), mime: clip.mime, durationSec: clip.durationSec };
+    socket.emit('incident:report', payload, res => {
+      reportStatus.textContent = res?.error ? res.error
+        : res?.audioError ? `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`
+        : 'Sent to the coordinator.';
+      if (res?.error) return;
       note.value = '';
+      if (pendingClip === clip) clearPendingClip();
     });
   }));
 </script>

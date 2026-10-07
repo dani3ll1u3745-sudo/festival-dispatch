@@ -6,7 +6,7 @@
   <title>Camera | MaydAI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <meta name="theme-color" content="#ffffff">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
   <link rel="stylesheet" href="style.css">
   <style>
     /* The video sits on a "monitor plate" whose colour is the detection state. Everything else stays quiet. */
@@ -25,18 +25,18 @@
     @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
     @media (max-width: 560px) { .location-label { display: none; } }
 
-    .stage {
+    .monitor {
       --plate: #1e2836; --ring: transparent; --copy: #c3cdd9;
       --bar-fire: #ff7a59; --bar-smoke: #b8c2cf; --bar-none: rgba(255, 255, 255, .25);
       background: var(--plate); color: #fff; border-radius: 16px; padding: 8px;
       box-shadow: 0 0 0 3px var(--ring);
       transition: background-color .25s ease, box-shadow .25s ease;
     }
-    .stage[data-phase="checking"] { --plate: #4d3305; --ring: #f0a020; --copy: #f5e3bf; }
-    .stage[data-phase="smoke"] { --plate: #323c49; --ring: #8d99a8; }
-    .stage[data-phase="fire"] { --plate: #b42318; --ring: #ff7a59; --copy: #ffe1d9; --bar-fire: #ffd5c9; --bar-smoke: #f3b7a8; --bar-none: rgba(255, 255, 255, .35); }
-    .stage[data-phase="error"] { --ring: #b42318; }
-    .stage.alarm { animation: alarm 1s ease-out 3; }
+    .monitor[data-phase="checking"] { --plate: #4d3305; --ring: #f0a020; --copy: #f5e3bf; }
+    .monitor[data-phase="smoke"] { --plate: #323c49; --ring: #8d99a8; }
+    .monitor[data-phase="fire"] { --plate: #b42318; --ring: #ff7a59; --copy: #ffe1d9; --bar-fire: #ffd5c9; --bar-smoke: #f3b7a8; --bar-none: rgba(255, 255, 255, .35); }
+    .monitor[data-phase="error"] { --ring: #b42318; }
+    .monitor.alarm { animation: alarm 1s ease-out 3; }
     @keyframes alarm { from { box-shadow: 0 0 0 3px var(--ring), 0 0 0 0 rgba(217, 58, 38, .65); } to { box-shadow: 0 0 0 3px var(--ring), 0 0 0 22px rgba(217, 58, 38, 0); } }
 
     .feed { position: relative; border-radius: 10px; overflow: hidden; background: #111821; aspect-ratio: 16 / 9; }
@@ -59,7 +59,7 @@
     .caption .actions:not(:empty) { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
     .caption .actions button { background: #fff; border-color: #fff; color: #1a1f29; }
     .caption .actions button:hover { background: #e9edf2; border-color: #e9edf2; }
-    .stage :focus-visible { outline-color: #fff; }
+    .monitor :focus-visible { outline-color: #fff; }
     .evidence { margin: 0; }
     .evidence canvas { display: block; width: 100%; height: 44px; border-radius: 6px; background: rgba(0, 0, 0, .2); }
     .evidence figcaption { font-size: .8rem; color: var(--copy); margin-top: .35rem; }
@@ -70,8 +70,8 @@
     .sent time { font-size: .875rem; color: var(--muted); }
     .sent p { grid-column: 2; margin: 0; font-size: .9rem; }
     .sent .closed { color: var(--muted); }
-    .report { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .6rem; }
-    .report button { padding: .55rem .4rem; }
+    .manual-report { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .6rem; }
+    .manual-report button { padding: .55rem .4rem; }
 
     .threshold-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
     input[type=range] { width: 100%; accent-color: var(--accent); margin: .6rem 0 .2rem; min-height: 28px; }
@@ -81,7 +81,7 @@
     #qr { background: #fff; padding: .6rem; border-radius: 8px; width: max-content; margin: .75rem 0 .4rem; border: 1px solid var(--border); }
     #qrUrl { word-break: break-all; }
 
-    @media (prefers-reduced-motion: reduce) { .stage { transition: none; } .stage.alarm { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .monitor { transition: none; } .monitor.alarm { animation: none; } }
   </style>
 </head>
 <body>
@@ -95,7 +95,7 @@
   </header>
 
   <main class="layout">
-    <section class="stage" id="stage" data-phase="loading" aria-labelledby="statusTitle">
+    <section class="monitor" id="stage" data-phase="loading" aria-labelledby="statusTitle">
       <div class="feed" id="feed">
         <video id="cam" autoplay playsinline muted></video>
         <canvas id="overlay"></canvas>
@@ -127,7 +127,7 @@
       <section class="panel">
         <h2>Report something the camera missed</h2>
         <p class="muted small">Sends the current frame to the coordinator straight away.</p>
-        <div class="report">
+        <div class="manual-report">
           <button class="danger" data-type="fire">Fire</button>
           <button class="secondary" data-type="medical">Medical</button>
           <button class="secondary" data-type="overcrowding">Crowding</button>
