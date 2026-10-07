@@ -133,6 +133,7 @@
     if (!storedId()) showJoin();
   });
 
+  socket.on('transcription:ready', () => { if (config) { config.transcriptionEnabled = true; updateStageHint(); } });
   socket.on('assignment', a => showAlert(a, true));
   socket.on('assignment:cancelled', ({ resolved, reassigned, standDown }) => {
     assignment = null;

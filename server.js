@@ -36,13 +36,63 @@ const AUDIO_MAX_BYTES = 3 * 1024 * 1024;
 const AUDIO_TYPES = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
 const audioExt = mime => Object.entries(AUDIO_TYPES).find(([t]) => mime.startsWith(t))?.[1];
 
-// ---------- Speech-to-text for voice clips (optional: whichever key is set) ----------
+// ---------- Speech-to-text for voice clips ----------
 // Claude can't take audio, so clips are transcribed here and the text goes through the usual AI steps.
-const STT_PROVIDER = process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPGRAM_API_KEY ? 'deepgram' : null;
+// Default: OpenAI's open-source Whisper model running locally (no key, audio never leaves this machine).
+// An OPENAI_API_KEY or DEEPGRAM_API_KEY switches to that hosted service; LOCAL_TRANSCRIPTION=off disables it.
+const STT_PROVIDER = process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPGRAM_API_KEY ? 'deepgram'
+  : process.env.LOCAL_TRANSCRIPTION === 'off' ? null : 'local';
 const STT_TIMEOUT_MS = 15000;
+const WHISPER_MODEL = process.env.WHISPER_MODEL || 'Xenova/whisper-base.en';
+let whisper = null; // the loaded local pipeline; null until ready
+let sttQueue = Promise.resolve(); // local clips are transcribed one at a time so they don't fight over the CPU
+const transcriptionReady = () => STT_PROVIDER === 'local' ? !!whisper : !!STT_PROVIDER;
+
+async function loadWhisper() {
+  const started = Date.now();
+  try {
+    const { pipeline } = await import('@huggingface/transformers');
+    whisper = await pipeline('automatic-speech-recognition', WHISPER_MODEL, { dtype: 'q8' });
+    console.log(`[stt] local Whisper (${WHISPER_MODEL}) ready in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+    io.emit('transcription:ready'); // pages that loaded earlier switch over to server transcription
+  } catch (err) {
+    console.warn('[stt] local Whisper unavailable, phones will transcribe in the browser:', err.message);
+  }
+}
+
+// Decodes any phone recording (m4a, webm, ogg, mp3) to the 16 kHz mono samples Whisper expects.
+async function decodeForWhisper(buffer, mime) {
+  const { execFile } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  // A temp file rather than a pipe: iPhone .m4a files need a seekable input to be read.
+  const file = path.join(os.tmpdir(), `maydai-clip-${process.pid}-${Date.now()}.${audioExt(mime)}`);
+  await fs.promises.writeFile(file, buffer);
+  try {
+    return await new Promise((resolve, reject) => {
+      execFile(require('ffmpeg-static'), ['-v', 'error', '-i', file, '-f', 'f32le', '-ac', '1', '-ar', '16000', 'pipe:1'],
+        { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, timeout: STT_TIMEOUT_MS }, (err, stdout, stderr) => {
+          if (err) return reject(new Error(`ffmpeg: ${stderr.toString().trim() || err.message}`));
+          resolve(new Float32Array(stdout.buffer, stdout.byteOffset, stdout.byteLength / 4));
+        });
+    });
+  } finally {
+    fs.promises.unlink(file).catch(() => {});
+  }
+}
 
 async function transcribeAudio(buffer, mime) {
   const type = mime.split(';')[0];
+  if (STT_PROVIDER === 'local') {
+    if (!whisper) throw new Error('Local Whisper is still loading');
+    const run = sttQueue.then(async () => {
+      const audio = await decodeForWhisper(buffer, mime);
+      const out = await whisper(audio, { chunk_length_s: 30 });
+      return String(out.text || '').trim();
+    });
+    sttQueue = run.catch(() => {});
+    return run;
+  }
   if (STT_PROVIDER === 'openai') {
     const form = new FormData();
     form.append('file', new Blob([buffer], { type }), `clip.${audioExt(mime)}`);
@@ -468,7 +518,7 @@ app.get('/api/audio/:id', (req, res) => {
 // Volunteer pages post a recorded clip here and get its text back to review before sending the report.
 // Only joined volunteers can use it, so the page can't be used to spend transcription credit anonymously.
 app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: AUDIO_MAX_BYTES }), async (req, res) => {
-  if (!STT_PROVIDER) return res.status(503).json({ error: 'Transcription is not set up' });
+  if (!transcriptionReady()) return res.status(503).json({ error: 'Transcription is not available' });
   if (!volunteers.some(v => v.id === req.get('X-Volunteer-Id'))) return res.status(403).json({ error: 'Join the team first' });
   const mime = req.get('Content-Type') || '';
   if (!Buffer.isBuffer(req.body) || !req.body.length || !audioExt(mime)) return res.status(400).json({ error: 'Not a supported voice clip' });
@@ -483,7 +533,7 @@ app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: AUDIO_MAX_BYTE
 });
 
 app.get('/api/config', (req, res) => {
-  res.json({ ...config, publicUrl: process.env.PUBLIC_URL || null, aiEnabled: !!anthropic, transcriptionEnabled: !!STT_PROVIDER });
+  res.json({ ...config, publicUrl: process.env.PUBLIC_URL || null, aiEnabled: !!anthropic, transcriptionEnabled: transcriptionReady() });
 });
 
 // HTTP alternative to the socket event, e.g. for a Python detector.
@@ -497,7 +547,7 @@ const io = new Server(server, { maxHttpBufferSize: 5e6 });
 
 // ---------- Sockets ----------
 io.on('connection', socket => {
-  socket.emit('state', { incidents, volunteers: volunteers.map(publicVolunteer), config: { ...config, transcriptionEnabled: !!STT_PROVIDER } });
+  socket.emit('state', { incidents, volunteers: volunteers.map(publicVolunteer), config: { ...config, transcriptionEnabled: transcriptionReady() } });
 
   socket.on('incident:report', (data, ack) => {
     const result = handleReport(data);
@@ -642,5 +692,6 @@ server.listen(PORT, () => {
   console.log(`  Coordinator: http://localhost:${PORT}/coordinator.html`);
   console.log(`  Volunteer:   http://localhost:${PORT}/volunteer.html`);
   console.log(`  AI recommendations: ${anthropic ? `on (${MODEL})` : 'off (no ANTHROPIC_API_KEY, using template)'}`);
-  console.log(`  Voice clip transcription: ${STT_PROVIDER || 'off (no OPENAI_API_KEY or DEEPGRAM_API_KEY, phones transcribe in the browser)'}`);
+  console.log(`  Voice clip transcription: ${STT_PROVIDER === 'local' ? `local Whisper (${WHISPER_MODEL}), loading...` : STT_PROVIDER || 'off (phones transcribe in the browser)'}`);
+  if (STT_PROVIDER === 'local') loadWhisper();
 });
