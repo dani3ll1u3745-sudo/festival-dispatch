@@ -149,11 +149,13 @@ async function getRecommendation(incident) {
       detectedBy: incident.sources,
       confidence: incident.confidence,
       note: incident.note || null,
+      acceptedQualifications: config.incidentTypes[incident.type].requires.map(q => config.qualifications[q]),
     },
     shortlist: incident.shortlist.map(v => ({
       id: v.id,
       name: v.name,
       qualifications: v.qualifications.map(q => config.qualifications[q]),
+      qualifiedForThisIncident: v.qualified,
       currentZone: v.zoneName,
       distanceMetres: v.distance,
     })),
@@ -161,6 +163,7 @@ async function getRecommendation(incident) {
       id: v.id,
       name: v.name,
       qualifications: v.qualifications.map(q => config.qualifications[q]),
+      qualifiedForThisIncident: v.qualified,
       currentZone: v.zoneName,
       distanceMetres: v.distance,
       currentJob: `${v.currentTypeLabel} at ${v.currentZoneName}`,
@@ -182,6 +185,9 @@ async function getRecommendation(incident) {
     'recommendedCount is an integer from 1 to 3: how many volunteers to send in total, counting anyone in ' +
     'alreadyAssigned. Rank volunteers best first. Only use ids from the shortlist. Be calm and practical. ' +
     'Incident priority: 1 is most urgent. ' +
+    'A volunteer is qualified if qualifiedForThisIncident is true. acceptedQualifications lists acceptable training ' +
+    'in priority order (first is best). Never say no qualified volunteers are available if any shortlisted ' +
+    'volunteer has qualifiedForThisIncident true. ' +
     'If no shortlisted volunteer is qualified, you may recommend reassigning a busy volunteer from a less urgent ' +
     'incident, naming them and their current job. If no suitable volunteer is available at all, include calling ' +
     'emergency services in the actions.';
