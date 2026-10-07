@@ -56,6 +56,7 @@ p { margin: .25rem 0; }
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .topbar .small { color: var(--muted); }
+.topbar > .small { white-space: nowrap; }
 .status-dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: #c3c9d2; margin-right: .4rem; vertical-align: middle; }
 .status-dot.on { background: var(--success); }
 
@@ -84,8 +85,6 @@ button.secondary:disabled:hover { background: var(--surface); border-color: var(
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .full { width: 100%; }
 .row { display: flex; gap: .5rem; flex-wrap: wrap; }
-.card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
-.card-actions > * { width: 100%; }
 
 input[type=text], textarea {
   width: 100%; min-height: 44px; padding: .55rem .75rem; font: inherit;
@@ -117,26 +116,6 @@ label.check input:focus-visible { outline: 2px solid var(--accent); outline-offs
 .tag.quiet { background: #eef0f3; color: var(--muted); }
 .warn { color: var(--crowd-strong); }
 
-.incident { border-left: 3px solid var(--border); }
-.incident.fire { border-left-color: var(--fire); }
-.incident.medical { border-left-color: var(--medical); }
-.incident.overcrowding { border-left-color: var(--crowd); }
-.incident.other { border-left-color: var(--other); }
-.incident .description { font-size: 15px; margin: .4rem 0; }
-.incident.resolved { background: #fafbfc; box-shadow: none; } /* no opacity: it would push muted text below AA */
-.incident.collapsed { padding: .5rem 1rem; }
-.card-head, .card-toggle { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
-.card-toggle, .card-toggle:hover {
-  width: 100%; min-height: 40px; padding: 0; border: 0; background: none; color: var(--text);
-  font-size: 1.05rem; text-align: left; margin-bottom: .25rem;
-}
-.incident.collapsed .card-toggle { margin-bottom: 0; }
-.summary-row { display: flex; gap: .75rem; align-items: flex-start; margin: .5rem 0; }
-.thumb, .thumb:hover { flex-shrink: 0; min-height: 0; padding: 0; border: 0; background: none; border-radius: 8px; }
-.thumb img { width: 96px; border-radius: 8px; display: block; border: 1px solid var(--border); }
-.incident ul { margin: .35rem 0 .5rem 1.1rem; padding: 0; }
-.escalation { border: 1px solid var(--fire); background: var(--fire-soft); border-radius: 8px; padding: .75rem; margin: .6rem 0; display: grid; gap: .5rem; }
-.escalation h3 { color: var(--fire-strong); }
 .candidate { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .6rem 0; border-top: 1px solid var(--border); }
 .candidate button { min-height: 40px; flex-shrink: 0; }
 
@@ -172,32 +151,140 @@ label.check input:focus-visible { outline: 2px solid var(--accent); outline-offs
 .overlay[hidden] { display: none; }
 .overlay .panel { margin-bottom: 0; box-shadow: 0 8px 24px rgba(16, 24, 40, .16); }
 
-/* Live camera line on coordinator cards: is the detected fire still in view? */
-.camera-line { display: flex; align-items: center; gap: .45rem; font-weight: 500; }
-.camera-line::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
-.camera-line.visible { color: var(--fire-strong); }
-.camera-line.visible::before { background: var(--fire); }
-.camera-line.clear { color: var(--medical-strong); }
-.camera-line.clear::before { background: var(--success); }
-/* The emergency call spans the row so Mark resolved and False alarm sit side by side under it. */
-.card-actions > .call-outline { grid-column: 1 / -1; }
+/* ---------- Coordinator: one card per incident, read top to bottom in the order decisions get made ----------
+   What and where, then is it real (photo with the AI's verdict on it), then the one thing to do now,
+   then the plan with its run bar in the thumb zone. Everything else folds away. */
+body.coord { font-size: 16px; }
+.incident {
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1rem 0; margin-bottom: 1rem;
+}
+.incident.fire { border-left-color: var(--fire); }
+.incident.medical { border-left-color: var(--medical); }
+.incident.overcrowding { border-left-color: var(--crowd); }
+.incident.other { border-left-color: var(--other); }
+.incident.resolved { background: #fafbfc; box-shadow: none; padding-bottom: 1rem; } /* no opacity: it would push muted text below AA */
+.incident.collapsed { padding: .25rem 1rem; }
+.incident .inc-head { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: 1.15rem; }
+.incident .inc-zone { flex: 1; min-width: 0; font-weight: 700; }
+.incident .inc-age { font-size: .875rem; font-weight: 400; color: var(--muted); white-space: nowrap; }
+.incident .card-toggle, .incident .card-toggle:hover { width: 100%; min-height: 44px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; }
+.incident .inc-source { margin: .15rem 0 .75rem; font-size: .875rem; color: var(--muted); }
+.incident .description { margin: .4rem 0; font-size: 1rem; }
+.incident .clips { margin: .5rem 0; }
 
-/* AI read of the camera photo: verdict first, one sentence of insight. Tinted by whether it confirms the incident. */
-.ai-view { flex: 1; min-width: 0; border-radius: 8px; padding: .55rem .7rem; background: #eef0f3; }
-.ai-view p { margin: 0; }
-.ai-view .ai-people { margin-top: .3rem; color: var(--muted); }
-.ai-verdict { display: flex; align-items: center; gap: .45rem; font-weight: 600; margin-bottom: .15rem; }
-.ai-pill { flex-shrink: 0; padding: .05rem .4rem; border-radius: 4px; font-size: .7rem; font-weight: 600; background: var(--text); color: #fff; }
-.ai-view.yes.fire { background: var(--fire-soft); }
-.ai-view.yes.fire .ai-verdict { color: var(--fire-strong); }
-.ai-view.yes.medical { background: var(--medical-soft); }
-.ai-view.yes.medical .ai-verdict { color: var(--medical-strong); }
-.ai-view.yes.overcrowding { background: var(--crowd-soft); }
-.ai-view.yes.overcrowding .ai-verdict { color: var(--crowd-strong); }
-.ai-view.unclear { background: var(--crowd-soft); }
-.ai-view.unclear .ai-verdict { color: var(--crowd-strong); }
-.ai-view.yes.other { background: var(--other-soft); }
-.ai-view.yes.other .ai-verdict { color: var(--other-strong); }
+/* The photo carries the AI's verdict and the camera's live status, so the evidence and the read sit together. */
+.incident .photo, .incident .photo:hover {
+  position: relative; display: block; width: 100%; min-height: 0; padding: 0; border: 0;
+  border-radius: 10px; overflow: hidden; background: #111821;
+}
+.incident .photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.incident .verdict {
+  position: absolute; left: .5rem; bottom: .5rem; max-width: calc(100% - 1rem); padding: .35rem .65rem;
+  border-radius: 6px; font-size: .95rem; font-weight: 700; text-align: left; color: #fff; background: var(--ink);
+}
+.incident.fire .verdict.yes { background: var(--fire-strong); }
+.incident.medical .verdict.yes { background: var(--medical-strong); }
+.incident.overcrowding .verdict.yes { background: var(--crowd-strong); }
+.incident.other .verdict.yes { background: var(--other-strong); }
+.incident .verdict.unclear { background: var(--crowd-strong); }
+.incident .verdict.pending { background: rgba(22, 35, 58, .82); font-weight: 400; }
+.incident .live { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 700; }
+.incident .photo .live { position: absolute; top: .5rem; right: .5rem; padding: .2rem .55rem; border-radius: 6px; background: rgba(255, 255, 255, .94); }
+.incident .live::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; }
+.incident .live.visible { color: var(--fire-strong); }
+.incident .live.visible::before { background: var(--fire); }
+.incident .live.clear { color: var(--medical-strong); }
+.incident .live.clear::before { background: var(--success); }
+
+.incident .facts { list-style: none; display: flex; flex-wrap: wrap; gap: .35rem; margin: .6rem 0 0; padding: 0; }
+.incident .facts li { padding: .15rem .6rem; border-radius: 999px; font-size: .85rem; background: #eef0f3; color: var(--other-strong); }
+.incident .facts li.alarm { background: var(--fire-soft); color: var(--fire-strong); font-weight: 700; }
+.incident .facts li.calm { background: var(--medical-soft); color: var(--medical-strong); }
+.incident .insight { margin: .6rem 0 0; font-size: 1.05rem; line-height: 1.45; }
+.incident .insight.pending, .incident .plan-pending { color: var(--muted); }
+
+/* Two ranked options. The chosen one is the largest text in the card; the other is a quiet card you can switch to. */
+.incident .decision { margin-top: 1rem; }
+.incident .option { padding: .1rem 0 .1rem .8rem; border-left: 4px solid var(--ink); }
+.incident.fire .option { border-left-color: var(--fire); }
+.incident.medical .option { border-left-color: var(--medical); }
+.incident.overcrowding .option { border-left-color: var(--crowd); }
+.incident .option-rank { margin: 0; font-size: .8rem; color: var(--muted); }
+.incident .option-title { margin: .1rem 0 0; font-size: 1.3rem; line-height: 1.3; font-weight: 700; color: var(--ink); }
+.incident .option-why { margin: .25rem 0 0; font-size: .95rem; color: var(--muted); }
+.incident .option-alt, .incident .option-alt:hover {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .1rem .75rem; width: 100%; margin-top: .75rem;
+  padding: .75rem .9rem; border: 1px dashed var(--rule); border-radius: 10px; background: var(--paper);
+  color: var(--text); font-weight: 400; text-align: left;
+}
+.incident .option-alt:hover { border-color: var(--slate); }
+.incident .option-alt > span { grid-column: 1; display: block; }
+.incident .option-alt-title { font-size: 1.02rem; font-weight: 700; }
+.incident .option-alt .option-switch { grid-column: 2; grid-row: 1 / span 3; align-self: center; font-weight: 700; color: var(--accent); }
+.incident .ai-note { margin: .6rem 0 0; font-size: .85rem; color: var(--muted); }
+.incident .plan-empty { padding: .75rem 0; }
+
+/* The plan reads as a run sheet: each row says exactly what Run will do. */
+.incident .plan { margin-top: .75rem; }
+.incident .steps { list-style: none; margin: 0; padding: 0; }
+.incident .step {
+  display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto; gap: .25rem .7rem; align-items: start;
+  padding: .75rem 0; border-top: 1px solid var(--border);
+}
+.incident .step:first-child { border-top: 0; }
+.incident .tick { width: 1.4rem; height: 1.4rem; margin: .15rem 0 0; accent-color: var(--ink); }
+.incident span.tick.done { display: grid; place-items: center; border-radius: 50%; background: var(--success); color: #fff; }
+.incident .step-title { margin: 0; font-size: 1.02rem; font-weight: 700; }
+.incident .step.done .step-title { font-weight: 400; color: var(--muted); }
+.incident .step-detail { margin: .1rem 0 0; font-size: .875rem; color: var(--muted); }
+.incident .step.reassign .step-detail { color: var(--crowd-strong); }
+.incident .step-msg { margin: .4rem 0 0; padding: .4rem .6rem; border-radius: 8px; font-size: .95rem; background: var(--paper); }
+.incident .step textarea { margin-top: .4rem; }
+.incident .step .link-button { min-height: 36px; padding: 0; font-size: .9rem; }
+.incident .step-status { display: flex; align-items: center; gap: .35rem; margin: .3rem 0 0; font-size: .9rem; font-weight: 700; }
+.incident .step-status.ok { color: var(--medical-strong); }
+.incident .step-status.bad { color: var(--fire-strong); }
+.incident .step-status.warn { color: var(--crowd-strong); }
+.incident .do, .incident .do:hover { min-height: 40px; padding: .4rem .9rem; }
+/* Swappable parts of a step look like links, so the sentence still reads as a sentence. */
+.incident .inline-select {
+  max-width: 100%; min-height: 32px; padding: 0 .1rem; font: inherit; font-weight: 700; color: var(--accent);
+  border: 0; border-bottom: 2px dotted var(--accent); border-radius: 0; background: none; cursor: pointer;
+}
+.incident .call-why { margin: .5rem 0 0; font-size: .9rem; font-weight: 700; color: var(--fire-strong); }
+
+/* Run bar in the thumb zone: it stays on screen while any part of the plan is visible. */
+.incident .plan-bar {
+  position: sticky; bottom: 0; z-index: 2; display: flex; gap: .5rem;
+  margin: .5rem -1rem 0; padding: .75rem 1rem calc(.75rem + env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.incident .plan-bar .run { flex: 1; min-height: 52px; font-size: 1.05rem; background: var(--ink); border-color: var(--ink); }
+.incident .plan-bar .run:hover, .incident .plan-bar .run:disabled:hover { background: #0e1829; border-color: #0e1829; }
+.incident .plan-bar .button { flex: 0 0 auto; min-height: 52px; }
+.incident .plan-bar .button:only-child { flex: 1; }
+
+.incident .team { margin-top: 1rem; }
+.incident .team h3 { margin-bottom: .25rem; }
+.incident .member { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-top: 1px solid var(--border); }
+.incident .state { font-weight: 400; font-size: .875rem; color: var(--muted); }
+.incident .state.accepted { color: var(--accent); }
+.incident .state.arrived { color: var(--medical-strong); font-weight: 700; }
+.incident .more { margin-top: 1rem; border-top: 1px solid var(--border); }
+.incident .more summary { display: flex; align-items: center; min-height: 48px; font-weight: 700; color: var(--accent); cursor: pointer; }
+.incident .more h3 { margin-top: .75rem; }
+.incident .inc-foot { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: 0 -1rem; padding: .75rem 1rem 1rem; border-top: 1px solid var(--border); }
+.incident .more + .inc-foot { margin-top: 0; }
+#snapshotPhotos figure { margin: 0 0 .75rem; }
+#snapshotPhotos img { display: block; width: 100%; border-radius: 8px; }
+
+/* Volunteer page: a message from the coordinator to everyone in the volunteer's zone. */
+.zone-msg { margin-top: .75rem; padding: .75rem .9rem; border-left: 4px solid var(--ink); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+.zone-msg.fire { border-left-color: var(--fire); }
+.zone-msg.medical { border-left-color: var(--medical); }
+.zone-msg.overcrowding { border-left-color: var(--crowd); }
+.zone-msg-text { margin: .2rem 0 .6rem; font-size: 1.15rem; font-weight: 700; color: var(--ink); }
 
 /* ---------- Volunteer page: built around one big report stage ---------- */
 body.vol { background: var(--paper); font-size: 17px; }

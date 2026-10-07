@@ -136,7 +136,37 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok5 = visibleAtStart && clearedOnCard && backInView && dismissed && alertsAfterFalseAlarm && alertsAfterResolve;
   console.log(ok5 ? 'scenario 5 ok' : `scenario 5 FAILED (dismissed: ${dismissed}, after false alarm: ${alertsAfterFalseAlarm}, after resolve: ${alertsAfterResolve})`);
 
-  const ok = ok1 && ok2 && ok3 && ok4 && ok5;
+  // ---- Scenario 6: run a plan. A step is re-checked when it runs; a stale one fails and can be retried edited ----
+  console.log('\n-- scenario 6: run a plan --');
+  const fresh = await volunteer.emitWithAck('volunteer:join', { name: 'Planner', qualifications: ['first_aid'] });
+  const spare = await volunteer.emitWithAck('volunteer:join', { name: 'Spare', qualifications: ['first_aid'] });
+  await wait(300);
+  const p1 = await camera.emitWithAck('incident:report', { type: 'medical', source: 'camera', zoneId: 'first-aid-tent', manual: true, confidence: 1 });
+  await wait(1500); // the plan arrives with the recommendation
+  const med = () => incidents.get(p1.id);
+  const steps = () => (med().recommendation?.options || []).flatMap(o => o.plan);
+  const step = steps().find(a => a.kind === 'dispatch');
+  console.log('plan:', steps().map(a => `${a.kind} ${a.volunteerName || ''}`).join(', '));
+  // Make the planned volunteer busy elsewhere, so the step is stale when it runs.
+  const elsewhere = await camera.emitWithAck('incident:report', { type: 'overcrowding', source: 'camera', zoneId: 'gate-a', manual: true, confidence: 1 });
+  await coordinator.emitWithAck('dispatch', { incidentId: elsewhere.id, volunteerId: step.volunteerId });
+  const stale = await coordinator.emitWithAck('plan:run', { incidentId: p1.id, actions: [{ id: step.id }] });
+  console.log('stale run:', stale.results);
+  const failedStale = !!stale.results[0]?.error && steps().find(a => a.id === step.id).status === 'failed';
+  // Retry with a different volunteer and an edited briefing.
+  const swapTo = [fresh.volunteer.id, spare.volunteer.id].find(id => id !== step.volunteerId);
+  const retry = await coordinator.emitWithAck('plan:run', { incidentId: p1.id, actions: [{ id: step.id, volunteerId: swapTo, briefing: 'Bring the AED' }] });
+  await wait(300);
+  console.log('retry:', retry.results);
+  const doneStep = steps().find(a => a.id === step.id);
+  const retried = doneStep.status === 'done' && doneStep.volunteerId === swapTo && doneStep.briefing === 'Bring the AED'
+    && med().assignments.some(a => a.volunteerId === swapTo);
+  const again = await coordinator.emitWithAck('plan:run', { incidentId: p1.id, actions: [{ id: step.id }] });
+  const notTwice = again.results.length === 0;
+  const ok6 = !!step && failedStale && retried && notTwice;
+  console.log(ok6 ? 'scenario 6 ok' : `scenario 6 FAILED (plan step: ${!!step}, stale failed: ${failedStale}, retried: ${retried}, not run twice: ${notTwice})`);
+
+  const ok = ok1 && ok2 && ok3 && ok4 && ok5 && ok6;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();

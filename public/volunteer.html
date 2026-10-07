@@ -64,6 +64,12 @@
       <p class="slate" id="post"></p>
       <p id="standby"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
       <button class="secondary full" id="showAssignment" hidden>View current assignment</button>
+      <!-- Message from the coordinator to everyone in this volunteer's zone -->
+      <div class="zone-msg" id="zoneMsg" role="alert" hidden>
+        <p class="small slate" id="zoneMsgFrom"></p>
+        <p class="zone-msg-text" id="zoneMsgText"></p>
+        <button class="secondary" id="zoneMsgOk">Got it</button>
+      </div>
     </div>
 
     <!-- Report stage -->
@@ -135,6 +141,14 @@
 
   socket.on('transcription:ready', () => { if (config) { config.transcriptionEnabled = true; updateStageHint(); } });
   socket.on('assignment', a => showAlert(a, true));
+  socket.on('zone:message', m => {
+    zoneMsgFrom.textContent = `Coordinator to everyone at ${m.zoneName}, ${new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    zoneMsgText.textContent = m.text;
+    zoneMsg.className = `zone-msg ${m.type || ''}`;
+    zoneMsg.hidden = false;
+    FD.beep(2);
+  });
+  zoneMsgOk.onclick = () => { zoneMsg.hidden = true; };
   socket.on('assignment:cancelled', ({ resolved, reassigned, standDown, falseAlarm }) => {
     assignment = null;
     alertEl.classList.remove('show');

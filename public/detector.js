@@ -14,6 +14,7 @@ import { SIZE, WINDOW, letterbox, rgbTensor, trackEvidence } from './fire/detect
 const ALERT_TYPE = 'fire'; // smoke is shown but never alerts: haze machines run at every festival stage
 const CLEAR_AFTER_MS = 4000; // no fire in any frame for this long = "no longer in view"
 const STATUS_EVERY_MS = 5000; // "still in view" heartbeat to the coordinator while fire stays visible
+const FOLLOWUP_MS = 15000; // a second photo this long after the alert lets the AI judge whether it's spreading
 const MIN_INTERVAL_MS = 120; // at most ~8 analysed frames a second
 const STALL_MS = 10000; // no result for this long: restart the model
 
@@ -26,7 +27,7 @@ const inputCtx = input.getContext('2d', { willReadFrequently: true });
 
 let worker, ready = false, frameId = 0, current = 0, lastVideoTime = -1, lastResultAt = 0;
 let evidence = { frames: [] }, boxes = [];
-// The current fire, once confirmed: { visible, lastSeenAt, lastStatusAt, incidentId }.
+// The current fire, once confirmed: { visible, lastSeenAt, lastStatusAt, incidentId, alertedAt, followupSent }.
 // incidentId is null while the report is unacknowledged or after its incident was closed.
 let sighting = null;
 let state = { phase: 'loading', fire: null, smoke: null, ms: null, fps: null, error: null };
@@ -106,7 +107,7 @@ function onResult(data) {
 
   if (fire.confirmed && !sighting?.visible) {
     // New sighting: boxes are already on the overlay, so they appear in the snapshot.
-    sighting = { visible: true, lastSeenAt: now, lastStatusAt: now, incidentId: null };
+    sighting = { visible: true, lastSeenAt: now, lastStatusAt: now, incidentId: null, alertedAt: now, followupSent: false };
     sendReport(fire);
   } else if (sighting?.visible) {
     if (!fireInFrame && now - sighting.lastSeenAt > CLEAR_AFTER_MS) {
@@ -115,7 +116,10 @@ function onResult(data) {
     } else if (fireInFrame && now - sighting.lastStatusAt > STATUS_EVERY_MS) {
       sighting.lastStatusAt = now;
       // Without an open incident (closed, or never acknowledged) report it as a new sighting.
-      if (sighting.incidentId) window.reportCameraStatus(ALERT_TYPE, true, fire.score);
+      // The first heartbeat after FOLLOWUP_MS carries a photo, once per incident.
+      const followup = sighting.incidentId && !sighting.followupSent && now - sighting.alertedAt > FOLLOWUP_MS;
+      if (followup) sighting.followupSent = true;
+      if (sighting.incidentId) window.reportCameraStatus(ALERT_TYPE, true, fire.score, followup);
       else sendReport(fire);
     }
   }
@@ -131,7 +135,11 @@ function sendReport(fire) {
     type: ALERT_TYPE,
     confidence: Math.max(...evidence.frames.map(f => f.fire)),
     note: `Seen in ${fire.hits} of ${fire.total} frames over ${WINDOW.windowMs / 1000} seconds`,
-  }).then(ack => { if (s === sighting) s.incidentId = ack?.id || null; });
+  }).then(ack => {
+    if (s !== sighting) return;
+    if (ack?.id && ack.id !== s.incidentId && !ack.merged) { s.alertedAt = performance.now(); s.followupSent = false; } // a new incident
+    s.incidentId = ack?.id || null;
+  });
 }
 
 function drawBoxes() {

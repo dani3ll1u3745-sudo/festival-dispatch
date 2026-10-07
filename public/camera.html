@@ -234,8 +234,9 @@
     const payload = { source: 'camera', zoneId, timestamp: now, snapshot: getCameraFrame(), ...event };
     return new Promise(resolve => socket.emit('incident:report', payload, resolve));
   };
-  window.reportCameraStatus = (type, visible, confidence) =>
-    socket.emit('camera:status', { type, zoneId, visible, confidence });
+  // withFrame sends the current frame too, so the AI can compare it with the alert photo.
+  window.reportCameraStatus = (type, visible, confidence, withFrame) =>
+    socket.emit('camera:status', { type, zoneId, visible, confidence, ...(withFrame && { snapshot: getCameraFrame() }) });
 
   document.querySelectorAll('[data-type]').forEach(b => b.addEventListener('click', () => {
     reportIncident({ type: b.dataset.type, confidence: 1, manual: true, note: 'Reported manually at the camera desk' });

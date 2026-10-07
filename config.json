@@ -4,11 +4,24 @@
   "emergencyNumber": "000",
   "cameraZoneId": "main-stage",
   "volunteerStartZones": ["food-court", "gate-a", "first-aid-tent"],
+  "conditions": "Saturday evening, 34°C and dry, gusty north wind blowing toward the Food Court. Headliner on Main Stage 21:00 to 22:30; the crowd surges forward when they start and out through Gate A when they finish.",
   "zones": {
-    "main-stage":     { "name": "Main Stage",     "lat": -37.8240, "lng": 144.9718 },
-    "food-court":     { "name": "Food Court",     "lat": -37.8255, "lng": 144.9745 },
-    "gate-a":         { "name": "Gate A",         "lat": -37.8212, "lng": 144.9700 },
-    "first-aid-tent": { "name": "First Aid Tent", "lat": -37.8263, "lng": 144.9722 }
+    "main-stage": {
+      "name": "Main Stage", "lat": -37.8240, "lng": 144.9718,
+      "notes": "Two extinguishers behind the sound desk, one in the stage-left wing. Exit A (north, to Gate A) and Exit B (east, to the Food Court). Crowd is densest centre-front at the barrier. The stage manager can pause the show."
+    },
+    "food-court": {
+      "name": "Food Court", "lat": -37.8255, "lng": 144.9745,
+      "notes": "Eight food trucks cooking on gas; each has a gas shut-off at the rear, an extinguisher and a fire blanket. The walkway between trucks is narrow and jams at peak times. Water station at the east end."
+    },
+    "gate-a": {
+      "name": "Gate A", "lat": -37.8212, "lng": 144.9700,
+      "notes": "Main entry and exit with a security checkpoint. Ambulance lane on the left side, keep it clear. Bottleneck when the headliner finishes."
+    },
+    "first-aid-tent": {
+      "name": "First Aid Tent", "lat": -37.8263, "lng": 144.9722,
+      "notes": "Two paramedics on duty, an AED, shade and cooling. Stretcher access from the service road behind the tent."
+    }
   },
   "qualifications": {
     "first_aid": "First aid",
