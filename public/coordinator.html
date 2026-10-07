@@ -19,6 +19,13 @@
   </div>
 </div>
 
+<div class="overlay" id="snapshotModal" role="dialog" aria-modal="true" aria-label="Camera frame" hidden>
+  <div class="panel" style="max-width: 900px; width: 100%;">
+    <img id="snapshotImg" alt="Camera frame at detection" style="width: 100%; border-radius: 8px; display: block;">
+    <button class="secondary full" id="snapshotClose" style="margin-top: .75rem;">Close</button>
+  </div>
+</div>
+
 <div class="page">
   <div class="topbar">
     <div>
@@ -78,8 +85,24 @@
 
   const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
   const assignmentLabel = { sent: 'Notified', accepted: 'On the way', arrived: 'Arrived' };
+  // Incident ids the coordinator has opened, kept across re-renders so live updates don't collapse them.
+  const expandedResolved = new Set();
+  const expandedCandidates = new Set();
 
   function incidentCard(i) {
+    const open = i.status !== 'resolved';
+    const header = `
+      <span><span class="tag ${i.type}">${esc(i.typeLabel)}</span> ${esc(i.zoneName)}</span>
+      <span class="small muted">${open ? '' : 'Resolved '}${timeAgo(i.createdAt)}</span>`;
+
+    // Resolved incidents collapse to a single line that toggles the full card.
+    if (!open && !expandedResolved.has(i.id)) {
+      return `
+      <article class="panel incident ${i.type} resolved collapsed">
+        <button class="card-toggle" data-toggle-resolved="${i.id}" aria-expanded="false">${header}</button>
+      </article>`;
+    }
+
     const rec = i.recommendation;
     const reasons = new Map((rec?.volunteers || []).map(v => [v.id, v.reason]));
     // Order shortlist by the AI's ranking when available.
@@ -104,7 +127,7 @@
           data-confirm="${esc(`Stand ${a.name} down from this incident?`)}">Remove</button>
       </div>`).join('') : '<p class="small muted">Waiting for dispatch</p>'}`;
 
-    const candidates = i.status === 'resolved' ? '' : shortlist.length ? shortlist.map(v => `
+    const candidateRows = shortlist.length ? shortlist.map(v => `
       <div class="candidate">
         <div>
           <h3>${esc(v.name)} ${v.online ? '<span class="status-dot on" title="Phone connected"></span>' : ''}</h3>
@@ -113,8 +136,16 @@
         </div>
         <button data-dispatch="${i.id}" data-vol="${v.id}">${assigned.length ? 'Add' : 'Dispatch'}</button>
       </div>`).join('') : '<p class="small muted">No available volunteers.</p>';
+    const candidateList = `<h3 style="margin-top:.8rem">Available volunteers</h3>${candidateRows}`;
+    // Once enough people are assigned, tuck the candidate list behind a toggle.
+    const enoughAssigned = rec && assigned.length >= rec.recommendedCount;
+    const showCandidates = !enoughAssigned || expandedCandidates.has(i.id);
+    const candidates = !open ? '' : enoughAssigned ? `
+      <button class="secondary full" style="margin-top:.8rem" data-toggle-candidates="${i.id}" aria-expanded="${showCandidates}">
+        Add more people (${shortlist.length})
+      </button>
+      ${showCandidates ? candidateList : ''}` : candidateList;
 
-    const open = i.status !== 'resolved';
     const num = esc(config.emergencyNumber);
     const callLink = cls => `<a class="button ${cls}" href="tel:${num}" data-call>Call ${num}</a>`;
     // The server keeps needsEscalation current for every unresolved incident, counting who is already assigned.
@@ -140,27 +171,32 @@
           data-confirm="${esc(`Take ${v.name} off ${v.currentTypeLabel} at ${v.currentZoneName}?`)}">Reassign</button>
       </div>`).join('')}` : '';
 
+    const thumb = i.snapshot ? `
+      <button class="thumb" data-snapshot="${i.id}" aria-label="Enlarge camera frame">
+        <img src="${i.snapshot}" alt="Camera frame at detection">
+      </button>` : '';
+
     return `
       <article class="panel incident ${i.type} ${i.status}">
-        <div class="row" style="justify-content: space-between; align-items: baseline;">
-          <h2><span class="tag ${i.type}">${esc(i.typeLabel)}</span> ${esc(i.zoneName)}</h2>
-          <span class="small muted">${timeAgo(i.createdAt)}</span>
-        </div>
+        ${open
+          ? `<h2 class="card-head">${header}</h2>`
+          : `<button class="card-toggle" data-toggle-resolved="${i.id}" aria-expanded="true">${header}</button>`}
         <p class="small muted">${sources}${conf}${i.reportCount > 1 ? `, ${i.reportCount} reports` : ''}</p>
         ${i.note ? `<p class="small">“${esc(i.note)}”</p>` : ''}
-        ${i.snapshot ? `<img class="snapshot" src="${i.snapshot}" alt="Camera frame at detection">` : ''}
+        <div class="summary-row">
+          ${thumb}
+          ${rec ? `<p>${esc(rec.summary)}</p>` : '<p class="small muted">Getting recommendation…</p>'}
+        </div>
         ${rec ? `
-          <p>${esc(rec.summary)}</p>
           <ul class="small">${rec.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
           <p class="small muted">${rec.source === 'ai' ? 'AI recommendation' : 'Standard procedure (AI unavailable)'}</p>
-        ` : '<p class="small muted">Getting recommendation…</p>'}
+        ` : ''}
         ${assignedSection}
-        ${fireCall}
         ${escalation}
-        ${open ? '<h3 style="margin-top:.8rem">Available volunteers</h3>' : ''}
         ${candidates}
         ${busy}
-        ${i.status !== 'resolved' ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
+        ${fireCall}
+        ${open ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
       </article>`;
   }
 
@@ -199,7 +235,38 @@
     }
     const r = e.target.closest('[data-resolve]');
     if (r) socket.emit('incident:resolve', { incidentId: r.dataset.resolve });
+
+    const tr = e.target.closest('[data-toggle-resolved]');
+    if (tr) toggleAndKeepFocus(expandedResolved, tr.dataset.toggleResolved, 'data-toggle-resolved');
+    const tc = e.target.closest('[data-toggle-candidates]');
+    if (tc) toggleAndKeepFocus(expandedCandidates, tc.dataset.toggleCandidates, 'data-toggle-candidates');
+
+    const s = e.target.closest('[data-snapshot]');
+    if (s) openSnapshot(s.dataset.snapshot);
   });
+
+  // render() rebuilds the cards, so put keyboard focus back on the toggle that was used.
+  function toggleAndKeepFocus(set, id, attr) {
+    set.has(id) ? set.delete(id) : set.add(id);
+    render();
+    document.querySelector(`[${attr}="${id}"]`)?.focus();
+  }
+
+  // ---- Snapshot modal ----
+  let snapshotFrom = null;
+  function openSnapshot(id) {
+    snapshotImg.src = incidents.get(id)?.snapshot || '';
+    snapshotFrom = id;
+    snapshotModal.hidden = false;
+    snapshotClose.focus();
+  }
+  function closeSnapshot() {
+    snapshotModal.hidden = true;
+    snapshotImg.removeAttribute('src');
+    document.querySelector(`[data-snapshot="${snapshotFrom}"]`)?.focus();
+  }
+  snapshotClose.onclick = closeSnapshot;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !snapshotModal.hidden) closeSnapshot(); });
 
   setInterval(render, 15000); // keep "x min ago" fresh
 </script>
