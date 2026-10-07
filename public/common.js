@@ -5,6 +5,7 @@ window.FD = (() => {
   // Phones only allow sound after a tap: call this from a button handler.
   function unlockAudio() {
     try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback'; // iOS 17+: play sound even when the silent switch is on
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
       beep(1, 0.01); // near-silent blip to finish unlocking on iOS
