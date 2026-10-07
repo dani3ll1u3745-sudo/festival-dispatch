@@ -36,6 +36,40 @@ const AUDIO_MAX_BYTES = 3 * 1024 * 1024;
 const AUDIO_TYPES = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
 const audioExt = mime => Object.entries(AUDIO_TYPES).find(([t]) => mime.startsWith(t))?.[1];
 
+// ---------- Speech-to-text for voice clips (optional: whichever key is set) ----------
+// Claude can't take audio, so clips are transcribed here and the text goes through the usual AI steps.
+const STT_PROVIDER = process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPGRAM_API_KEY ? 'deepgram' : null;
+const STT_TIMEOUT_MS = 15000;
+
+async function transcribeAudio(buffer, mime) {
+  const type = mime.split(';')[0];
+  if (STT_PROVIDER === 'openai') {
+    const form = new FormData();
+    form.append('file', new Blob([buffer], { type }), `clip.${audioExt(mime)}`);
+    form.append('model', process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe');
+    form.append('language', 'en');
+    const r = await fetch(`${process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: form,
+      signal: AbortSignal.timeout(STT_TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error(`OpenAI ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return String((await r.json()).text || '').trim();
+  }
+  if (STT_PROVIDER === 'deepgram') {
+    const r = await fetch('https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=en', {
+      method: 'POST',
+      headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': type },
+      body: buffer,
+      signal: AbortSignal.timeout(STT_TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error(`Deepgram ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return String((await r.json()).results?.channels?.[0]?.alternatives?.[0]?.transcript || '').trim();
+  }
+  throw new Error('No speech-to-text provider configured');
+}
+
 // ---------- Helpers ----------
 const zone = id => config.zones[id];
 
@@ -431,8 +465,25 @@ app.get('/api/audio/:id', (req, res) => {
   res.send(clip.buffer);
 });
 
+// Volunteer pages post a recorded clip here and get its text back to review before sending the report.
+// Only joined volunteers can use it, so the page can't be used to spend transcription credit anonymously.
+app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: AUDIO_MAX_BYTES }), async (req, res) => {
+  if (!STT_PROVIDER) return res.status(503).json({ error: 'Transcription is not set up' });
+  if (!volunteers.some(v => v.id === req.get('X-Volunteer-Id'))) return res.status(403).json({ error: 'Join the team first' });
+  const mime = req.get('Content-Type') || '';
+  if (!Buffer.isBuffer(req.body) || !req.body.length || !audioExt(mime)) return res.status(400).json({ error: 'Not a supported voice clip' });
+  try {
+    const text = (await transcribeAudio(req.body, mime)).slice(0, 1000);
+    console.log(`[stt] ${STT_PROVIDER}: ${text.length} chars`);
+    res.json({ text });
+  } catch (err) {
+    console.warn('[stt] transcription failed:', err.message);
+    res.status(502).json({ error: 'Transcription failed' });
+  }
+});
+
 app.get('/api/config', (req, res) => {
-  res.json({ ...config, publicUrl: process.env.PUBLIC_URL || null, aiEnabled: !!anthropic });
+  res.json({ ...config, publicUrl: process.env.PUBLIC_URL || null, aiEnabled: !!anthropic, transcriptionEnabled: !!STT_PROVIDER });
 });
 
 // HTTP alternative to the socket event, e.g. for a Python detector.
@@ -446,7 +497,7 @@ const io = new Server(server, { maxHttpBufferSize: 5e6 });
 
 // ---------- Sockets ----------
 io.on('connection', socket => {
-  socket.emit('state', { incidents, volunteers: volunteers.map(publicVolunteer), config });
+  socket.emit('state', { incidents, volunteers: volunteers.map(publicVolunteer), config: { ...config, transcriptionEnabled: !!STT_PROVIDER } });
 
   socket.on('incident:report', (data, ack) => {
     const result = handleReport(data);
@@ -591,4 +642,5 @@ server.listen(PORT, () => {
   console.log(`  Coordinator: http://localhost:${PORT}/coordinator.html`);
   console.log(`  Volunteer:   http://localhost:${PORT}/volunteer.html`);
   console.log(`  AI recommendations: ${anthropic ? `on (${MODEL})` : 'off (no ANTHROPIC_API_KEY, using template)'}`);
+  console.log(`  Voice clip transcription: ${STT_PROVIDER || 'off (no OPENAI_API_KEY or DEEPGRAM_API_KEY, phones transcribe in the browser)'}`);
 });

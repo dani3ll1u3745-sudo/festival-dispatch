@@ -126,6 +126,7 @@
   socket.on('state', s => {
     config = s.config;
     festival.textContent = config.festivalName;
+    updateStageHint();
     quals.innerHTML = Object.entries(config.qualifications).map(([k, label]) =>
       `<label class="check"><input type="checkbox" value="${k}"> ${FD.esc(label)}</label>`).join('') +
       '<label class="check"><input type="checkbox" data-none> None yet</label>'; // UI-only, never sent
@@ -215,12 +216,17 @@
   hideBtn.onclick = () => alertEl.classList.remove('show');
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
-  // ---- Voice input: record a clip and transcribe it at the same time ----
+  // ---- Voice input ----
+  // With a speech-to-text key on the server, every phone just records a clip and the server transcribes it.
+  // Without one, the browser transcribes live: alongside recording where it can, transcription only on
+  // iPhone Safari (recording and transcription compete for the mic there), recording only where it can't.
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  // On iPhone/iPad, recording and transcription compete for the mic and neither works reliably together,
-  // so Safari only transcribes there. Browsers that can't transcribe (e.g. Chrome on iPhone) still record a clip.
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && !(isIOS && SpeechRecognition);
+  const recordSupported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  const serverTranscribes = () => recordSupported && !!config?.transcriptionEnabled;
+  const voiceMode = () => serverTranscribes() ? { record: true, transcribe: false }
+    : { record: recordSupported && !(isIOS && SpeechRecognition), transcribe: !!SpeechRecognition };
+  const updateStageHint = () => { stageHint.hidden = !voiceMode().record; }; // no clip without recording
   const MAX_SECONDS = 60;
   const MIC_ICON = micBtn.querySelector('svg').outerHTML;
   const STOP_ICON = '<svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
@@ -238,8 +244,8 @@
       : s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}. Tap to stop.` : 'Listening… Tap to stop.';
   }
 
-  if (!canRecord) stageHint.hidden = true; // no clip without recording
-  if (!SpeechRecognition && !canRecord) {
+  updateStageHint();
+  if (!SpeechRecognition && !recordSupported) {
     micBtn.style.display = 'none'; // .button's display rule overrides the hidden attribute
     listening.hidden = true;
   } else {
@@ -264,17 +270,19 @@
     debugLog.textContent += `${new Date().toLocaleTimeString()} ${msg}\n`;
     debugLog.scrollTop = debugLog.scrollHeight;
   }
-  dlog(`iOS: ${isIOS}, SpeechRecognition: ${!!SpeechRecognition}, recording: ${canRecord}`);
+  dlog(`iOS: ${isIOS}, SpeechRecognition: ${!!SpeechRecognition}, recording: ${recordSupported}`);
 
   async function startVoice() {
     voiceError.hidden = true;
     if (lastSession) lastSession.acceptResults = false;
-    const s = session = lastSession = { startedAt: Date.now(), acceptResults: true };
+    const mode = voiceMode();
+    const s = session = lastSession = { startedAt: Date.now(), acceptResults: true, ...mode };
     s.recEnded = new Promise(r => { s.markRecEnded = r; });
-    if (!SpeechRecognition) s.markRecEnded();
+    if (!s.transcribe) s.markRecEnded();
+    dlog(`mode: record ${s.record}, browser transcription ${s.transcribe}, server transcription ${serverTranscribes()}`);
     setAudioSession('play-and-record');
     setListening(true, s);
-    if (canRecord) {
+    if (s.record) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         if (session !== s) { stream.getTracks().forEach(t => t.stop()); return; } // stopped while asking permission
@@ -286,7 +294,10 @@
           stream.getTracks().forEach(t => t.stop());
           const type = recorder.mimeType || mime || 'audio/webm';
           const blob = new Blob(chunks, { type });
-          if (blob.size && !s.discardClip) setPendingClip(blob, type, s.durationSec);
+          dlog(`clip: ${blob.size} bytes, ${type}`);
+          if (!blob.size || s.discardClip) return;
+          setPendingClip(blob, type, s.durationSec);
+          if (serverTranscribes()) transcribeOnServer(pendingClip);
         };
         recorder.start(); // recorder first, then transcription
         Object.assign(s, { stream, recorder, startedAt: Date.now() });
@@ -295,9 +306,9 @@
       }
     }
     if (session !== s) return;
-    if (SpeechRecognition) startRecognition(s);
+    if (s.transcribe) startRecognition(s);
     else if (!s.recorder) { stopVoice(); showVoiceError(s.recordError?.name || 'not-allowed'); return; }
-    else {
+    else if (!serverTranscribes()) {
       // Recording works but this browser can't transcribe (e.g. Chrome on iPhone): say so rather than stay silent.
       voiceError.textContent = 'This browser can’t turn speech into text, but your voice clip will still go to the coordinator. On iPhone, Safari can transcribe.';
       voiceError.hidden = false;
@@ -367,6 +378,32 @@
     return recorderDone;
   }
 
+  // Sends a recorded clip to the server for speech-to-text and appends the text to the box for review.
+  function transcribeOnServer(clip) {
+    listening.textContent = 'Turning your clip into text…';
+    const fail = msg => { if (pendingClip === clip) { voiceError.textContent = msg; voiceError.hidden = false; } };
+    clip.transcribing = (async () => {
+      try {
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': clip.mime, 'X-Volunteer-Id': me?.id || '' },
+          body: clip.blob,
+        });
+        const data = await res.json().catch(() => ({}));
+        dlog(`transcribe: ${res.status} ${data.error || `${(data.text || '').length} chars`}`);
+        if (pendingClip !== clip) return; // removed or replaced while transcribing
+        if (data.text) note.value = [note.value.trim(), data.text].filter(Boolean).join(' ');
+        else if (res.ok) fail('No speech was heard in the clip. Type below, or send the clip on its own.');
+        else fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
+      } catch (err) {
+        dlog(`transcribe failed: ${err.message}`);
+        fail('Couldn’t turn the clip into text. Type below, or send the clip on its own.');
+      } finally {
+        if (!session) setListening(false);
+      }
+    })();
+  }
+
   // ---- Pending voice clip ----
   const clipAudio = new Audio();
   const PLAY_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
@@ -412,6 +449,10 @@
   document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', async () => {
     if (!me) return;
     await stopVoice({ abortTranscript: true }); // a recording in progress becomes the clip for this report
+    if (pendingClip?.transcribing) { // let the clip's text arrive so the AI can read it
+      reportStatus.textContent = 'Turning your clip into text…';
+      await Promise.race([pendingClip.transcribing, new Promise(r => setTimeout(r, 20000))]);
+    }
     const text = note.value.trim();
     if (b.dataset.report === 'other' && !text && !pendingClip) {
       reportStatus.textContent = 'Describe the incident or record a voice clip.';
