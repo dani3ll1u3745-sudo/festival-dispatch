@@ -183,7 +183,9 @@
           ? `<h2 class="card-head">${header}</h2>`
           : `<button class="card-toggle" data-toggle-resolved="${i.id}" aria-expanded="true">${header}</button>`}
         <p class="small muted">${sources}${conf}${i.reportCount > 1 ? `, ${i.reportCount} reports` : ''}</p>
-        ${i.note ? `<p class="small">“${esc(i.note)}”</p>` : ''}
+        ${i.note ? `<p class="description">“${esc(i.note)}”</p>` : ''}
+        ${i.reclassifiedFrom ? `<p class="small muted">AI reclassified from ${esc(i.reclassifiedFrom)}: ${esc(i.classificationReason || '')}</p>`
+          : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI assessment: ${esc(i.classificationReason)}</p>` : ''}
         <div class="summary-row">
           ${thumb}
           ${rec ? `<p>${esc(rec.summary)}</p>` : '<p class="small muted">Getting recommendation…</p>'}

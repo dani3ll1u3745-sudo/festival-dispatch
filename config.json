@@ -18,6 +18,7 @@
   "incidentTypes": {
     "fire":         { "label": "Fire",         "priority": 1, "requires": ["fire_warden", "first_aid"] },
     "medical":      { "label": "Medical",      "priority": 2, "requires": ["first_aid"] },
-    "overcrowding": { "label": "Overcrowding", "priority": 3, "requires": ["crowd_control"] }
+    "overcrowding": { "label": "Overcrowding", "priority": 3, "requires": ["crowd_control"] },
+    "other":        { "label": "Other",        "priority": 2, "requires": [] }
   }
 }

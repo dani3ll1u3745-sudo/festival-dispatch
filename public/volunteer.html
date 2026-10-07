@@ -70,11 +70,20 @@
     <div class="panel">
       <h2>Report an incident</h2>
       <p class="muted small">Reports go straight to the coordinator.</p>
-      <input type="text" id="note" placeholder="What's happening? (optional)" style="margin: .5rem 0;">
-      <div class="row">
+      <div class="describe">
+        <textarea id="note" rows="3" placeholder="Describe what's happening (optional for fire, medical, overcrowding)"></textarea>
+        <button class="secondary" id="micBtn" type="button" aria-label="Start voice input">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+          <span id="micLabel"></span>
+        </button>
+      </div>
+      <p class="small muted" id="listening" hidden>Listening…</p>
+      <p class="small warn" id="voiceError" hidden>Voice input unavailable, please type instead</p>
+      <div class="row" style="margin-top:.5rem">
         <button class="danger" data-report="fire">Fire</button>
         <button class="secondary" data-report="medical">Medical</button>
         <button class="secondary" data-report="overcrowding">Overcrowding</button>
+        <button class="secondary" data-report="other">Other</button>
       </div>
       <p class="small" id="reportStatus" style="margin-top:.5rem"></p>
     </div>
@@ -197,15 +206,59 @@
   hideBtn.onclick = () => alertEl.classList.remove('show');
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
+  // ---- Voice input ----
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  function setListening(on) {
+    micLabel.textContent = on ? 'Stop' : '';
+    micBtn.setAttribute('aria-label', on ? 'Stop voice input' : 'Start voice input');
+    listening.hidden = !on;
+  }
+  if (!SpeechRecognition) {
+    micBtn.style.display = 'none'; // .button's display rule overrides the hidden attribute
+  } else {
+    micBtn.onclick = () => {
+      if (recognition) { recognition.stop(); return; }
+      voiceError.hidden = true;
+      const base = note.value.trim(); // spoken text is appended to what's already typed
+      const rec = recognition = new SpeechRecognition();
+      rec.lang = 'en-AU';
+      rec.interimResults = true;
+      rec.continuous = true;
+      // Events from a recogniser that was stopped (e.g. by sending) are ignored, so they can't refill the box.
+      rec.onresult = e => {
+        if (recognition !== rec) return;
+        const spoken = [...e.results].map(r => r[0].transcript).join('').trim();
+        note.value = [base, spoken].filter(Boolean).join(' ');
+      };
+      rec.onerror = e => {
+        if (recognition === rec && e.error !== 'aborted' && e.error !== 'no-speech') voiceError.hidden = false;
+      };
+      rec.onend = () => { if (recognition === rec) { recognition = null; setListening(false); } };
+      try { rec.start(); setListening(true); }
+      catch { recognition = null; voiceError.hidden = false; }
+    };
+  }
+  function stopVoice() {
+    if (!recognition) return;
+    const rec = recognition;
+    recognition = null;
+    setListening(false);
+    rec.abort();
+  }
+
   // ---- Reporting ----
   document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () => {
     if (!me) return;
+    const text = note.value.trim();
+    if (b.dataset.report === 'other' && !text) { reportStatus.textContent = 'Please describe the incident'; return; }
+    stopVoice();
     socket.emit('incident:report', {
       type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId,
-      reporterId: me.id, note: note.value.trim() || `Reported by ${me.name}`,
+      reporterId: me.id, note: text || `Reported by ${me.name}`, // server ignores the default text for AI classification
     }, res => {
       reportStatus.textContent = res?.error ? res.error : 'Sent to the coordinator.';
-      note.value = '';
+      if (!res?.error) note.value = '';
     });
   }));
 </script>

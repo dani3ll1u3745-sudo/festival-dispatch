@@ -1,7 +1,8 @@
 // Runs the full flow without any browsers: volunteer joins, camera reports a fire,
 // coordinator dispatches, volunteer receives directions. Then a medical incident
 // arrives and the same volunteer is reassigned to it. Then two volunteers are sent
-// to one incident and stood down one at a time. Start the server first.
+// to one incident and stood down one at a time, and a volunteer describes an "other"
+// incident. Start the server first.
 const { io } = require('socket.io-client');
 const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -88,7 +89,24 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok3 = bothOn && priyaStays && reopened;
   console.log(ok3 ? 'scenario 3 ok' : `scenario 3 FAILED (both on: ${bothOn}, Priya stays: ${priyaStays}, reopened: ${reopened})`);
 
-  const ok = ok1 && ok2 && ok3;
+  // ---- Scenario 4: volunteer describes an "other" incident ----
+  // With AI on it may be reclassified, so only check that a sensible incident with candidates exists.
+  console.log('\n-- scenario 4: described "other" incident --');
+  const r5 = await volunteer.emitWithAck('incident:report', {
+    type: 'other', source: 'volunteer', zoneId: 'food-court', reporterId: joined.volunteer.id,
+    note: 'A child is lost near the food trucks',
+  });
+  console.log('report:', r5);
+  await wait(10000); // classification and recommendation, if the AI is on
+  const other = incidents.get(r5.id);
+  console.log('incident:', other?.type, `"${other?.typeLabel}"`, 'priority', other?.priority,
+    '| reclassifiedFrom:', other?.reclassifiedFrom, '| reason:', other?.classificationReason);
+  console.log('shortlist:', other?.shortlist.map(v => v.name).join(', '));
+  const ok4 = !!other && !r5.merged && ['other', 'fire', 'medical', 'overcrowding'].includes(other.type) &&
+    other.shortlist.length > 0 && other.note === 'A child is lost near the food trucks';
+  console.log(ok4 ? 'scenario 4 ok' : 'scenario 4 FAILED');
+
+  const ok = ok1 && ok2 && ok3 && ok4;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();
