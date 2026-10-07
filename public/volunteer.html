@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Volunteer | MaydAI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <meta name="theme-color" content="#ffffff">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+  <meta name="theme-color" content="#f4f6f8">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="vol">
 
 <!-- Assignment alert -->
 <div class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle">
@@ -38,17 +38,15 @@
 </div>
 
 <div class="page">
-  <div class="topbar">
-    <div>
-      <h1>MaydAI</h1>
-      <p class="muted small" id="festival"></p>
-    </div>
+  <header class="vol-top">
+    <h1>MaydAI</h1>
     <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
-  </div>
+  </header>
 
   <!-- Join -->
   <section id="joinView" hidden>
     <div class="panel">
+      <p class="small slate" id="festival"></p>
       <h2>Join the volunteer team</h2>
       <label for="volName" class="muted small">Your name</label>
       <input type="text" id="volName" autocomplete="given-name" placeholder="First name">
@@ -61,38 +59,39 @@
 
   <!-- On shift -->
   <section id="shiftView" hidden>
-    <div class="panel">
-      <h2 id="hello"></h2>
-      <p id="post" class="muted"></p>
-      <p id="standby" style="margin-top:.5rem"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
-      <button class="secondary full" id="showAssignment" hidden style="margin-top:.75rem">View current assignment</button>
+    <div class="vol-who">
+      <p class="who-name" id="hello"></p>
+      <p class="slate" id="post"></p>
+      <p id="standby"><strong>Standing by.</strong> You'll get an alert here when you're needed.</p>
+      <button class="secondary full" id="showAssignment" hidden>View current assignment</button>
     </div>
-    <div class="panel">
-      <h2>Report an incident</h2>
-      <p class="muted small">Reports go straight to the coordinator.</p>
-      <div class="describe">
-        <textarea id="note" rows="3" placeholder="Describe what's happening (optional for fire, medical, overcrowding)"></textarea>
-        <button class="secondary" id="micBtn" type="button" aria-label="Start voice input" aria-pressed="false">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-          <span id="micLabel"></span>
-        </button>
-      </div>
+
+    <!-- Report stage -->
+    <div class="stage">
+      <button class="mic" id="micBtn" type="button" aria-label="Start voice input" aria-pressed="false">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+      </button>
+      <p class="stage-label" id="listening">Tap to describe what's happening</p>
+      <p class="stage-hint" id="stageHint">Your voice clip goes to the coordinator.</p>
+      <p class="small warn" id="voiceError" hidden>Voice input unavailable, please type instead</p>
+      <textarea id="note" rows="3" placeholder="Or type what's happening" aria-label="What's happening"></textarea>
       <div class="clip-row" id="clipRow" hidden>
         <button class="secondary" id="clipPlay" type="button" aria-label="Play voice clip"></button>
         <span id="clipDuration"></span>
         <button class="link-button" id="clipRemove" type="button">Remove clip</button>
       </div>
-      <p class="small muted" id="listening" hidden>Listening…</p>
-      <p class="small warn" id="voiceError" hidden>Voice input unavailable, please type instead</p>
-      <div class="row" style="margin-top:.5rem">
-        <button class="danger" data-report="fire">Fire</button>
-        <button class="secondary" data-report="medical">Medical</button>
-        <button class="secondary" data-report="overcrowding">Overcrowding</button>
-        <button class="secondary" data-report="other">Other</button>
+      <div class="report-grid">
+        <button class="report fire" data-report="fire">Report fire</button>
+        <button class="report medical" data-report="medical">Report medical</button>
+        <button class="report overcrowding" data-report="overcrowding">Report crowding</button>
+        <button class="report other" data-report="other">Report other</button>
       </div>
-      <p class="small" id="reportStatus" style="margin-top:.5rem"></p>
+      <p class="report-status" id="reportStatus" role="status"></p>
     </div>
-    <button class="secondary full" id="leaveBtn">Leave shift</button>
+
+    <div class="vol-section">
+      <button class="link-button slate-link" id="leaveBtn">Leave shift</button>
+    </div>
   </section>
 </div>
 
@@ -146,8 +145,9 @@
   function showJoin() { joinView.hidden = false; shiftView.hidden = true; }
   function showShift() {
     joinView.hidden = true; shiftView.hidden = false;
-    hello.textContent = `On shift: ${me.name}`;
-    post.textContent = `Your post: ${config?.zones[me.zoneId]?.name || me.zoneId}`;
+    hello.textContent = `${me.name}, posted at ${config?.zones[me.zoneId]?.name || me.zoneId}`;
+    const trained = (me.qualifications || []).map(q => config?.qualifications[q] || q);
+    post.textContent = trained.length ? `Trained in ${trained.join(', ')}` : 'Trained in: none';
   }
 
   joinBtn.onclick = () => {
@@ -220,21 +220,25 @@
   const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
   const MAX_SECONDS = 60;
   const MIC_ICON = micBtn.querySelector('svg').outerHTML;
+  const STOP_ICON = '<svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
   const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   let session = null;     // the recording/transcribing in progress: { stream, recorder, recognition, startedAt, ... }
   let lastSession = null; // still allowed to deliver its final transcript after a tap-to-stop
   let pendingClip = null; // { blob, mime, durationSec, url }
 
   function setListening(on, s) {
-    micLabel.textContent = on ? 'Stop' : '';
+    if (micBtn.classList.contains('recording') !== on) micBtn.innerHTML = on ? STOP_ICON : MIC_ICON;
+    micBtn.classList.toggle('recording', on);
     micBtn.setAttribute('aria-label', on ? 'Stop voice input' : 'Start voice input');
     micBtn.setAttribute('aria-pressed', String(on));
-    listening.hidden = !on;
-    if (on) listening.textContent = s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}` : 'Listening…';
+    listening.textContent = !on ? 'Tap to describe what’s happening'
+      : s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}. Tap to stop.` : 'Listening… Tap to stop.';
   }
 
+  if (!canRecord) stageHint.hidden = true; // no clip without recording
   if (!SpeechRecognition && !canRecord) {
     micBtn.style.display = 'none'; // .button's display rule overrides the hidden attribute
+    listening.hidden = true;
   } else {
     micBtn.onclick = () => (session ? stopVoice() : startVoice());
   }
