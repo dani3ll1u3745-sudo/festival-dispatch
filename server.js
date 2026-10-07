@@ -1,4 +1,4 @@
-// Festival Dispatch relay server.
+// MaydAI relay server.
 // Holds all state in memory (restart = clean slate) and relays events between
 // the camera page (laptop), coordinator page (phone) and volunteer pages (phones).
 require('dotenv').config({ quiet: true });
@@ -367,7 +367,7 @@ io.on('connection', socket => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Festival Dispatch running on http://localhost:${PORT}`);
+  console.log(`MaydAI running on http://localhost:${PORT}`);
   console.log(`  Camera:      http://localhost:${PORT}/camera.html`);
   console.log(`  Coordinator: http://localhost:${PORT}/coordinator.html`);
   console.log(`  Volunteer:   http://localhost:${PORT}/volunteer.html`);

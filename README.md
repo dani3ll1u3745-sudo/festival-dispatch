@@ -1,4 +1,4 @@
-# Festival Dispatch
+# MaydAI
 
 Camera-based incident detection and volunteer dispatch for music festivals (Affinda AI Innovation Challenge demo).
 

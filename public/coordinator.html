@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Coordinator | Festival Dispatch</title>
+  <title>Coordinator | MaydAI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap">
   <link rel="stylesheet" href="style.css">
@@ -21,7 +21,10 @@
 
 <div class="page">
   <div class="topbar">
-    <h1 id="title">Coordinator</h1>
+    <div>
+      <h1>MaydAI</h1>
+      <p class="muted small" id="festival"></p>
+    </div>
     <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
   </div>
 
@@ -51,7 +54,7 @@
 
   socket.on('state', s => {
     config = s.config;
-    title.textContent = config.festivalName;
+    festival.textContent = config.festivalName;
     incidents = new Map(s.incidents.map(i => [i.id, i]));
     volunteers = s.volunteers;
     render();

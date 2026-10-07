@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Camera | Festival Dispatch</title>
+  <title>Camera | MaydAI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap">
   <link rel="stylesheet" href="style.css">
@@ -127,7 +127,7 @@
     config = c;
     const camZone = c.zones[c.cameraZoneId].name;
     title.textContent = `${camZone} camera`;
-    document.title = `${camZone} camera | Festival Dispatch`;
+    document.title = `${camZone} camera | MaydAI`;
     const base = c.publicUrl || location.origin;
     const url = base.replace(/\/$/, '') + '/volunteer.html';
     if (window.QRCode) new QRCode(document.getElementById('qr'), { text: url, width: 180, height: 180 });
