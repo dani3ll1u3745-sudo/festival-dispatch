@@ -44,7 +44,7 @@ const audioExt = mime => Object.entries(AUDIO_TYPES).find(([t]) => mime.startsWi
 const STT_PROVIDER = process.env.OPENAI_API_KEY ? 'openai' : process.env.DEEPGRAM_API_KEY ? 'deepgram'
   : process.env.LOCAL_TRANSCRIPTION === 'off' ? null : 'local';
 const STT_TIMEOUT_MS = 15000;
-const WHISPER_MODEL = process.env.WHISPER_MODEL || 'Xenova/whisper-base.en';
+const WHISPER_MODEL = process.env.WHISPER_MODEL || 'Xenova/whisper-small.en';
 let whisper = null; // the loaded local pipeline; null until ready
 let sttQueue = Promise.resolve(); // local clips are transcribed one at a time so they don't fight over the CPU
 const transcriptionReady = () => STT_PROVIDER === 'local' ? !!whisper : !!STT_PROVIDER;
@@ -53,7 +53,10 @@ async function loadWhisper() {
   const started = Date.now();
   try {
     const { pipeline } = await import('@huggingface/transformers');
-    whisper = await pipeline('automatic-speech-recognition', WHISPER_MODEL, { dtype: 'q8' });
+    // A quantized encoder is what costs Whisper most of its accuracy, so only the decoder is quantized.
+    whisper = await pipeline('automatic-speech-recognition', WHISPER_MODEL, {
+      dtype: { encoder_model: 'fp32', decoder_model_merged: 'q8' },
+    });
     console.log(`[stt] local Whisper (${WHISPER_MODEL}) ready in ${((Date.now() - started) / 1000).toFixed(1)}s`);
     io.emit('transcription:ready'); // pages that loaded earlier switch over to server transcription
   } catch (err) {
