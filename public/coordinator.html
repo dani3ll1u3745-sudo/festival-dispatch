@@ -109,6 +109,32 @@
         </button>
       </div>`).join('') : '<p class="small muted">No available volunteers.</p>';
 
+    const open = i.status !== 'resolved';
+    const num = esc(config.emergencyNumber);
+    const callLink = cls => `<a class="button ${cls}" href="tel:${num}" data-call>Call ${num}</a>`;
+    // needsEscalation is only recalculated while open, so ignore it once someone has been sent.
+    const escalating = i.status === 'open' && i.needsEscalation;
+    const escalation = escalating ? `
+      <div style="border: 2px solid var(--fire); border-radius: 8px; padding: .75rem; margin: .6rem 0; display: grid; gap: .5rem;">
+        <h3>No trained volunteer available</h3>
+        ${callLink('danger full')}
+      </div>` : '';
+    const fireCall = open && i.type === 'fire' && !escalating
+      ? `<p>${callLink('secondary')}</p>` : '';
+    const busy = escalating && i.busyCandidates?.length ? `
+      <h3 style="margin-top:.8rem">Busy volunteers you could reassign</h3>
+      ${i.busyCandidates.map(v => `
+      <div class="candidate">
+        <div>
+          <h3>${esc(v.name)} ${v.online ? '<span class="status-dot on" title="Phone connected"></span>' : ''}</h3>
+          <p class="small muted">${esc(`${qualNames(v.qualifications)}; ${v.distance} m away`)}</p>
+          <p class="small">Currently on ${esc(v.currentTypeLabel)} at ${esc(v.currentZoneName)}</p>
+          ${v.qualified ? '' : '<p class="small" style="color: var(--hivis)">No matching qualification</p>'}
+        </div>
+        <button data-dispatch="${i.id}" data-vol="${v.id}"
+          data-confirm="${esc(`Take ${v.name} off ${v.currentTypeLabel} at ${v.currentZoneName}?`)}">Reassign</button>
+      </div>`).join('')}` : '';
+
     return `
       <article class="panel incident ${i.type} ${i.status}">
         <div class="row" style="justify-content: space-between; align-items: baseline;">
@@ -124,7 +150,10 @@
           <p class="small muted">${rec.source === 'ai' ? 'AI recommendation' : 'Standard procedure (AI unavailable)'}</p>
         ` : '<p class="small muted">Getting recommendation…</p>'}
         <p><strong>${statusText(i)}</strong></p>
+        ${fireCall}
+        ${escalation}
         ${candidates}
+        ${busy}
         ${i.status !== 'resolved' ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
       </article>`;
   }
@@ -147,8 +176,10 @@
   const incidentsEl = document.getElementById('incidents');
 
   document.addEventListener('click', e => {
+    const call = e.target.closest('[data-call]');
+    if (call && !confirm(`Call ${config.emergencyNumber}? This dials emergency services.`)) e.preventDefault();
     const d = e.target.closest('[data-dispatch]');
-    if (d) {
+    if (d && (!d.dataset.confirm || confirm(d.dataset.confirm))) {
       d.disabled = true;
       socket.emit('dispatch', { incidentId: d.dataset.dispatch, volunteerId: d.dataset.vol }, res => {
         if (res?.error) alert(res.error);

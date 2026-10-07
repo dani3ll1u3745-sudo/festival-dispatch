@@ -45,27 +45,50 @@ function publicVolunteer(v) {
   return rest;
 }
 
-function buildShortlist(incident) {
+function candidateFor(v, incident) {
   const requires = config.incidentTypes[incident.type].requires; // in priority order
-  const target = zone(incident.zoneId);
+  const tier = requires.findIndex(q => v.qualifications.includes(q));
+  return {
+    id: v.id,
+    name: v.name,
+    qualifications: v.qualifications,
+    zoneId: v.zoneId,
+    zoneName: zone(v.zoneId)?.name,
+    online: v.online,
+    distance: distanceMetres(zone(v.zoneId), zone(incident.zoneId)),
+    tier: tier === -1 ? 99 : tier,
+    qualified: tier !== -1,
+  };
+}
+
+function buildShortlist(incident) {
   return volunteers
     .filter(v => v.status === 'available')
-    .map(v => {
-      const tier = requires.findIndex(q => v.qualifications.includes(q));
-      return {
-        id: v.id,
-        name: v.name,
-        qualifications: v.qualifications,
-        zoneId: v.zoneId,
-        zoneName: zone(v.zoneId)?.name,
-        online: v.online,
-        distance: distanceMetres(zone(v.zoneId), target),
-        tier: tier === -1 ? 99 : tier,
-        qualified: tier !== -1,
-      };
-    })
+    .map(v => candidateFor(v, incident))
     .sort((a, b) => a.tier - b.tier || (a.distance ?? 1e9) - (b.distance ?? 1e9))
     .slice(0, 3);
+}
+
+// Volunteers already assigned elsewhere who could be pulled off a less urgent job.
+// 'busy' volunteers are unavailable for other reasons and never offered.
+function buildBusyCandidates(incident) {
+  return volunteers
+    .filter(v => v.status === 'assigned' && v.assignment && v.assignment.incidentId !== incident.id)
+    .map(v => ({
+      ...candidateFor(v, incident),
+      currentIncidentId: v.assignment.incidentId,
+      currentTypeLabel: v.assignment.typeLabel,
+      currentZoneName: v.assignment.zoneName,
+      currentPriority: config.incidentTypes[v.assignment.type].priority,
+    }))
+    .sort((a, b) => b.currentPriority - a.currentPriority || a.tier - b.tier || (a.distance ?? 1e9) - (b.distance ?? 1e9))
+    .slice(0, 3);
+}
+
+function setCandidates(incident) {
+  incident.shortlist = buildShortlist(incident);
+  incident.busyCandidates = buildBusyCandidates(incident);
+  incident.needsEscalation = !incident.shortlist.some(v => v.qualified);
 }
 
 function buildDirectionsUrl(volunteer, incident) {
@@ -89,7 +112,7 @@ function templateRecommendation(incident) {
   return {
     source: 'template',
     summary: `Possible ${label} reported at ${incident.zoneName}.`,
-    actions,
+    actions: incident.needsEscalation ? ['No trained volunteer is free: call emergency services', ...actions] : actions,
     volunteers: incident.shortlist.map(v => ({
       id: v.id,
       reason: `${v.qualifications.map(q => config.qualifications[q]).join(', ') || 'No qualifications'}; ${v.distance} m away`,
@@ -120,6 +143,16 @@ async function getRecommendation(incident) {
       currentZone: v.zoneName,
       distanceMetres: v.distance,
     })),
+    busyCandidates: incident.busyCandidates.map(v => ({
+      id: v.id,
+      name: v.name,
+      qualifications: v.qualifications.map(q => config.qualifications[q]),
+      currentZone: v.zoneName,
+      distanceMetres: v.distance,
+      currentJob: `${v.currentTypeLabel} at ${v.currentZoneName}`,
+      currentJobPriority: v.currentPriority,
+    })),
+    needsEscalation: incident.needsEscalation,
   };
 
   const system =
@@ -127,7 +160,11 @@ async function getRecommendation(incident) {
     'volunteers (already filtered by code), respond with ONLY a JSON object, no markdown, in this shape: ' +
     '{"summary": "max 2 short sentences", "actions": ["3 short imperative actions"], ' +
     '"volunteers": [{"id": "volunteer id from the shortlist", "reason": "max 12 words"}]}. ' +
-    'Rank volunteers best first. Only use ids from the shortlist. Be calm and practical.';
+    'Rank volunteers best first. Only use ids from the shortlist. Be calm and practical. ' +
+    'Incident priority: 1 is most urgent. ' +
+    'If no shortlisted volunteer is qualified, you may recommend reassigning a busy volunteer from a less urgent ' +
+    'incident, naming them and their current job. If no suitable volunteer is available at all, include calling ' +
+    'emergency services in the actions.';
 
   try {
     const resp = await withTimeout(
@@ -196,9 +233,11 @@ function handleReport(raw = {}) {
     assignedVolunteerId: null,
     assignmentStatus: null, // sent -> accepted -> arrived
     shortlist: [],
+    busyCandidates: [],
+    needsEscalation: false,
     recommendation: null,
   };
-  incident.shortlist = buildShortlist(incident);
+  setCandidates(incident);
   incidents.unshift(incident);
   console.log(`[incident] ${incident.id} ${type} at ${incident.zoneName} via ${source}`);
   io.emit('incident:new', incident);
@@ -215,7 +254,7 @@ function refreshOpenShortlists() {
   incidents
     .filter(i => i.status === 'open')
     .forEach(i => {
-      i.shortlist = buildShortlist(i);
+      setCandidates(i);
       io.emit('incident:updated', i);
     });
 }
@@ -310,6 +349,19 @@ io.on('connection', socket => {
       if (previous.socketId) io.to(previous.socketId).emit('assignment:cancelled', { incidentId });
     }
 
+    // If this volunteer is being pulled off another incident, reopen that one.
+    const oldId = v.assignment?.incidentId;
+    if (oldId && oldId !== inc.id) {
+      const oldInc = incidents.find(i => i.id === oldId);
+      if (oldInc && oldInc.status !== 'resolved') {
+        oldInc.status = 'open';
+        oldInc.assignedVolunteerId = null;
+        oldInc.assignmentStatus = null;
+        io.emit('incident:updated', oldInc);
+      }
+      if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId: oldId, reassigned: true });
+    }
+
     inc.status = 'dispatched';
     inc.assignedVolunteerId = v.id;
     inc.assignmentStatus = 'sent';
@@ -329,6 +381,7 @@ io.on('connection', socket => {
     io.emit('incident:updated', inc);
     broadcastVolunteers();
     if (typeof ack === 'function') ack({ ok: true, delivered: !!v.socketId });
+    refreshOpenShortlists(); // other open incidents now see this volunteer as busy
   });
 
   socket.on('assignment:respond', ({ incidentId, status } = {}) => {

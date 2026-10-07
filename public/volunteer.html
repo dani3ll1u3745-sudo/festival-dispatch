@@ -119,11 +119,12 @@
   });
 
   socket.on('assignment', a => showAlert(a, true));
-  socket.on('assignment:cancelled', ({ resolved }) => {
+  socket.on('assignment:cancelled', ({ resolved, reassigned }) => {
     assignment = null;
     alertEl.classList.remove('show');
     showAssignment.hidden = true;
-    standby.innerHTML = resolved ? '<strong>Incident resolved. Thank you!</strong> Standing by.' : '<strong>Standing by.</strong> Your assignment was reassigned.';
+    standby.innerHTML = reassigned ? '<strong>Reassigned.</strong> You\'ve been moved to a more urgent incident.'
+      : resolved ? '<strong>Incident resolved. Thank you!</strong> Standing by.' : '<strong>Standing by.</strong> Your assignment was reassigned.';
   });
 
   function showJoin() { joinView.hidden = false; shiftView.hidden = true; }
