@@ -232,12 +232,24 @@
         note.value = [base, spoken].filter(Boolean).join(' ');
       };
       rec.onerror = e => {
-        if (recognition === rec && e.error !== 'aborted' && e.error !== 'no-speech') voiceError.hidden = false;
+        if (recognition === rec && e.error !== 'aborted' && e.error !== 'no-speech') showVoiceError(e.error);
       };
       rec.onend = () => { if (recognition === rec) { recognition = null; setListening(false); } };
       try { rec.start(); setListening(true); }
-      catch { recognition = null; voiceError.hidden = false; }
+      catch (err) { recognition = null; showVoiceError(err?.name || 'start-failed'); }
     };
+  }
+  // Name the likely cause, plus the browser's error code, so a failure can be fixed rather than guessed at.
+  function showVoiceError(code) {
+    const hint = !window.isSecureContext ? 'Voice input needs the https:// link'
+      : {
+        'not-allowed': 'Microphone access is blocked for this site. Allow it in the browser’s site settings',
+        'service-not-allowed': 'Voice input is turned off on this device (on iPhone: turn on Settings > General > Keyboard > Enable Dictation, and Siri)',
+        'network': 'The browser couldn’t reach its speech service',
+        'audio-capture': 'No microphone was found',
+      }[code] || 'Voice input unavailable';
+    voiceError.textContent = `${hint}. Please type instead. (${code})`;
+    voiceError.hidden = false;
   }
   function stopVoice() {
     if (!recognition) return;
