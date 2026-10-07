@@ -285,10 +285,15 @@
     setListening(true, s);
     if (s.record) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Echo cancellation puts iPhones into phone-call voice mode (16 kHz, very quiet), which wrecks
+        // transcription. Ask for the plain microphone with automatic gain, and a decent bitrate.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
+        });
         if (session !== s) { stream.getTracks().forEach(t => t.stop()); return; } // stopped while asking permission
+        dlog(`mic settings: ${JSON.stringify(stream.getAudioTracks()[0]?.getSettings?.() || {})}`);
         const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
-        const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        const recorder = new MediaRecorder(stream, { ...(mime && { mimeType: mime }), audioBitsPerSecond: 128000 });
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
         recorder.onstop = () => {
