@@ -48,6 +48,9 @@ button, .button {
 }
 button.secondary, .button.secondary { background: transparent; color: var(--text); border-color: var(--line); }
 button.danger, .button.danger { background: var(--fire); color: #fff; }
+.button.call-outline { background: transparent; border-color: var(--fire); color: var(--fire); gap: .4rem; }
+.card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.card-actions > * { width: 100%; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, .button:focus-visible, input:focus-visible { outline: 3px solid var(--hivis); outline-offset: 2px; }
 .full { width: 100%; }

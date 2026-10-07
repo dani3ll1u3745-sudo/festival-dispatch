@@ -85,6 +85,7 @@
 
   const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
   const assignmentLabel = { sent: 'Notified', accepted: 'On the way', arrived: 'Arrived' };
+  const PHONE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   // Incident ids the coordinator has opened, kept across re-renders so live updates don't collapse them.
   const expandedResolved = new Set();
   const expandedCandidates = new Set();
@@ -147,7 +148,7 @@
       ${showCandidates ? candidateList : ''}` : candidateList;
 
     const num = esc(config.emergencyNumber);
-    const callLink = cls => `<a class="button ${cls}" href="tel:${num}" data-call>Call ${num}</a>`;
+    const callLink = (cls, icon = '') => `<a class="button ${cls}" href="tel:${num}" data-call>${icon}Call ${num}</a>`;
     // The server keeps needsEscalation current for every unresolved incident, counting who is already assigned.
     const escalating = open && i.needsEscalation;
     const escalation = escalating ? `
@@ -155,8 +156,7 @@
         <h3>No trained volunteer available</h3>
         ${callLink('danger full')}
       </div>` : '';
-    const fireCall = open && i.type === 'fire' && !escalating
-      ? `<p>${callLink('secondary')}</p>` : '';
+    const fireCall = open && i.type === 'fire' && !escalating ? callLink('call-outline', PHONE_ICON) : '';
     const busy = escalating && i.busyCandidates?.length ? `
       <h3 style="margin-top:.8rem">Busy volunteers you could reassign</h3>
       ${i.busyCandidates.map(v => `
@@ -195,8 +195,11 @@
         ${escalation}
         ${candidates}
         ${busy}
-        ${fireCall}
-        ${open ? `<button class="secondary full" style="margin-top:.6rem" data-resolve="${i.id}">Mark resolved</button>` : ''}
+        ${open ? `
+          <div class="${fireCall ? 'card-actions' : ''}" style="margin-top:.6rem">
+            ${fireCall}
+            <button class="secondary full" data-resolve="${i.id}">Mark resolved</button>
+          </div>` : ''}
       </article>`;
   }
 
