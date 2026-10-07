@@ -271,6 +271,11 @@
     if (session !== s) return;
     if (SpeechRecognition) startRecognition(s);
     else if (!s.recorder) { stopVoice(); showVoiceError(s.recordError?.name || 'not-allowed'); return; }
+    else {
+      // Recording works but this browser can't transcribe (e.g. Chrome on iPhone): say so rather than stay silent.
+      voiceError.textContent = 'This browser can’t turn speech into text, but your voice clip will still go to the coordinator. On iPhone, Safari can transcribe.';
+      voiceError.hidden = false;
+    }
     s.timer = setInterval(() => setListening(true, s), 500);
     s.autoStop = setTimeout(() => { if (session === s) stopVoice(); }, MAX_SECONDS * 1000);
   }
