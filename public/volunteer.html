@@ -23,6 +23,7 @@
     <a class="button full" id="directionsBtn" target="_blank" rel="noopener">Open directions</a>
     <button class="secondary full" id="acceptBtn">Accept</button>
     <button class="secondary full" id="arrivedBtn">I've arrived</button>
+    <button class="secondary full" id="hideBtn">Hide</button>
   </div>
 </div>
 
@@ -156,9 +157,11 @@
     assignment = a;
     alertEl.className = `alert show ${a.type}`;
     alertTitle.textContent = a.typeLabel;
-    alertZone.textContent = `Go to ${a.zoneName} (from ${a.fromZoneName})`;
+    const sameZone = a.zoneName === a.fromZoneName;
+    alertZone.textContent = sameZone ? `You're already at ${a.zoneName}` : `Go to ${a.zoneName} (from ${a.fromZoneName})`;
     alertSummary.textContent = a.summary || '';
     directionsBtn.href = a.directionsUrl;
+    directionsBtn.style.display = sameZone ? 'none' : ''; // .button's display rule overrides the hidden attribute
     updateAlertStatus();
     showAssignment.hidden = false;
     standby.innerHTML = `<strong>Assigned:</strong> ${FD.esc(a.typeLabel)} at ${FD.esc(a.zoneName)}`;
@@ -178,6 +181,7 @@
   }
   acceptBtn.onclick = () => respond('accepted');
   arrivedBtn.onclick = () => respond('arrived');
+  hideBtn.onclick = () => alertEl.classList.remove('show');
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
   // ---- Reporting ----
