@@ -120,11 +120,12 @@
   });
 
   socket.on('assignment', a => showAlert(a, true));
-  socket.on('assignment:cancelled', ({ resolved, reassigned, standDown }) => {
+  socket.on('assignment:cancelled', ({ resolved, reassigned, standDown, falseAlarm }) => {
     assignment = null;
     alertEl.classList.remove('show');
     showAssignment.hidden = true;
-    standby.innerHTML = standDown ? '<strong>Stood down.</strong> You\'re no longer needed at that incident. Standing by.'
+    standby.innerHTML = falseAlarm ? '<strong>False alarm.</strong> The coordinator cancelled this incident. Standing by.'
+      : standDown ?'<strong>Stood down.</strong> You\'re no longer needed at that incident. Standing by.'
       : reassigned ? '<strong>Reassigned.</strong> You\'ve been moved to a more urgent incident.'
       : resolved ? '<strong>Incident resolved. Thank you!</strong> Standing by.' : '<strong>Standing by.</strong> Your assignment was reassigned.';
   });

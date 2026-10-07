@@ -148,3 +148,28 @@ label.check input:focus-visible { outline: 2px solid var(--accent); outline-offs
 .overlay .panel { margin-bottom: 0; box-shadow: 0 8px 24px rgba(16, 24, 40, .16); }
 
 @media (prefers-reduced-motion: reduce) { .banner { transition: none; } }
+
+/* Live camera line on coordinator cards: is the detected fire still in view? */
+.camera-line { display: flex; align-items: center; gap: .45rem; font-weight: 500; }
+.camera-line::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
+.camera-line.visible { color: var(--fire-strong); }
+.camera-line.visible::before { background: var(--fire); }
+.camera-line.clear { color: var(--medical-strong); }
+.camera-line.clear::before { background: var(--success); }
+/* The emergency call spans the row so Mark resolved and False alarm sit side by side under it. */
+.card-actions > .call-outline { grid-column: 1 / -1; }
+
+/* AI read of the camera photo: verdict first, one sentence of insight. Tinted by whether it confirms the incident. */
+.ai-view { flex: 1; min-width: 0; border-radius: 8px; padding: .55rem .7rem; background: #eef0f3; }
+.ai-view p { margin: 0; }
+.ai-view .ai-people { margin-top: .3rem; color: var(--muted); }
+.ai-verdict { display: flex; align-items: center; gap: .45rem; font-weight: 600; margin-bottom: .15rem; }
+.ai-pill { flex-shrink: 0; padding: .05rem .4rem; border-radius: 4px; font-size: .7rem; font-weight: 600; background: var(--text); color: #fff; }
+.ai-view.yes.fire { background: var(--fire-soft); }
+.ai-view.yes.fire .ai-verdict { color: var(--fire-strong); }
+.ai-view.yes.medical { background: var(--medical-soft); }
+.ai-view.yes.medical .ai-verdict { color: var(--medical-strong); }
+.ai-view.yes.overcrowding { background: var(--crowd-soft); }
+.ai-view.yes.overcrowding .ai-verdict { color: var(--crowd-strong); }
+.ai-view.unclear { background: var(--crowd-soft); }
+.ai-view.unclear .ai-verdict { color: var(--crowd-strong); }

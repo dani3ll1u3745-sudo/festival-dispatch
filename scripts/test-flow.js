@@ -88,7 +88,37 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok3 = bothOn && priyaStays && reopened;
   console.log(ok3 ? 'scenario 3 ok' : `scenario 3 FAILED (both on: ${bothOn}, Priya stays: ${priyaStays}, reopened: ${reopened})`);
 
-  const ok = ok1 && ok2 && ok3;
+  // ---- Scenario 4: camera fire goes out of view and comes back; closing never silences the camera ----
+  console.log('\n-- scenario 4: camera status, false alarm and resolve --');
+  const auto = { type: 'fire', source: 'camera', zoneId: 'gate-a', confidence: 0.7 };
+  const r5 = await camera.emitWithAck('incident:report', auto);
+  await wait(300);
+  const gateFire = () => incidents.get(r5.id);
+  const visibleAtStart = gateFire().camera?.visible === true;
+  camera.emit('camera:status', { type: 'fire', zoneId: 'gate-a', visible: false });
+  await wait(300);
+  const clearedOnCard = gateFire().camera?.visible === false;
+  // Back in view more than a minute later would still merge; this checks the merge itself.
+  const r6 = await camera.emitWithAck('incident:report', auto);
+  await wait(300);
+  const backInView = r6.id === r5.id && r6.merged && gateFire().camera?.visible === true;
+  console.log('camera visible / cleared / back in view:', visibleAtStart, clearedOnCard, backInView);
+
+  // Closing an incident never silences the camera: the next sighting raises a new alert.
+  coordinator.emit('incident:dismiss', { incidentId: r5.id });
+  await wait(300);
+  const dismissed = gateFire().status === 'resolved' && gateFire().outcome === 'false_alarm';
+  const r7 = await camera.emitWithAck('incident:report', auto);
+  const alertsAfterFalseAlarm = !!r7.id && !r7.merged && r7.id !== r5.id;
+  coordinator.emit('incident:resolve', { incidentId: r7.id });
+  await wait(300);
+  const r8 = await camera.emitWithAck('incident:report', auto);
+  const alertsAfterResolve = !!r8.id && !r8.merged && r8.id !== r7.id;
+  console.log('after false alarm:', r7, '| after resolve:', r8);
+  const ok4 = visibleAtStart && clearedOnCard && backInView && dismissed && alertsAfterFalseAlarm && alertsAfterResolve;
+  console.log(ok4 ? 'scenario 4 ok' : `scenario 4 FAILED (dismissed: ${dismissed}, after false alarm: ${alertsAfterFalseAlarm}, after resolve: ${alertsAfterResolve})`);
+
+  const ok = ok1 && ok2 && ok3 && ok4;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
   process.exit(ok ? 0 : 1);
 })();

@@ -12,8 +12,9 @@ const seedVolunteers = require('./volunteers.json');
 
 const PORT = process.env.PORT || 3000;
 const MERGE_WINDOW_MS = 60 * 1000; // same type + same zone within 60s = same incident
-const AI_TIMEOUT_MS = 8000;
-const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
+const AI_TIMEOUT_MS = 15000; // reading the photo takes a few seconds; the alert itself never waits for it
+const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5-5';
+const MODEL_HAS_EFFORT = !MODEL.startsWith('claude-haiku'); // Haiku 4.5 takes neither effort nor server-side fallbacks
 
 // ---------- Claude client (optional: falls back to a template if no key) ----------
 let anthropic = null;
@@ -101,7 +102,12 @@ function setCandidates(incident) {
 function removeFromIncident(incident, volunteerId) {
   incident.assignments = incident.assignments.filter(a => a.volunteerId !== volunteerId);
   if (incident.status !== 'resolved' && incident.assignments.length === 0) incident.status = 'open';
-  io.emit('incident:updated', incident);
+  emitUpdate(incident);
+}
+
+// Snapshots are ~40 KB each, so updates only carry one when it changed. Clients keep the last one they got.
+function emitUpdate(incident, withSnapshot = false) {
+  io.emit('incident:updated', withSnapshot ? incident : { ...incident, snapshot: undefined });
 }
 
 function buildDirectionsUrl(volunteer, incident) {
@@ -118,15 +124,16 @@ function buildDirectionsUrl(volunteer, incident) {
 function templateRecommendation(incident) {
   const label = config.incidentTypes[incident.type].label.toLowerCase();
   const actions = {
-    fire: ['Send a fire warden with an extinguisher', 'Clear people from the immediate area', 'Call emergency services if the fire grows'],
-    medical: ['Send a first aider with a kit', 'Keep the area clear for access', 'Call an ambulance if the person is unresponsive'],
-    overcrowding: ['Send crowd control to slow entry', 'Open an alternative exit route', 'Make an announcement to redirect the crowd'],
+    fire: ['Send a fire warden with an extinguisher', 'Clear people from the area', 'Call 000 if it grows'],
+    medical: ['Send a first aider with a kit', 'Keep access clear', 'Call an ambulance if unresponsive'],
+    overcrowding: ['Send crowd control to slow entry', 'Open another exit route', 'Announce a redirect'],
   }[incident.type];
   return {
     source: 'template',
     recommendedCount: { fire: 2, medical: 1, overcrowding: 2 }[incident.type],
     summary: `Possible ${label} reported at ${incident.zoneName}.`,
-    actions: incident.needsEscalation ? ['No trained volunteer is free: call emergency services', ...actions] : actions,
+    scene: null,
+    actions: incident.needsEscalation ? ['No trained volunteer free: call emergency services', ...actions] : actions,
     volunteers: incident.shortlist.map(v => ({
       id: v.id,
       reason: `${v.qualifications.map(q => config.qualifications[q]).join(', ') || 'No qualifications'}; ${v.distance} m away`,
@@ -134,9 +141,57 @@ function templateRecommendation(incident) {
   };
 }
 
-function withTimeout(promise, ms) {
-  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('AI timeout')), ms))]);
+// What Claude sees in the camera frame. Kept to a verdict and one sentence: the coordinator reads it in seconds.
+const SCENE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['confirms', 'looksLike', 'insight', 'peopleNearby'],
+  properties: {
+    confirms: {
+      type: 'string', enum: ['yes', 'no', 'unclear'],
+      description: 'Does the photo show the reported incident as a real emergency happening in front of the camera?',
+    },
+    looksLike: { type: 'string', description: 'What it actually is, 2 to 5 words, e.g. "small bin fire", "fire on a phone screen", "stage pyrotechnics"' },
+    insight: { type: 'string', description: 'One sentence, at most 18 words: the one thing in the photo that most changes what the coordinator should do' },
+    peopleNearby: { type: 'string', enum: ['none', 'few', 'many', 'unclear'] },
+  },
+};
+
+function recommendationSchema(withScene) {
+  const properties = {
+    ...(withScene && { scene: SCENE_SCHEMA }),
+    summary: { type: 'string', description: 'One sentence, at most 15 words' },
+    actions: { type: 'array', items: { type: 'string' }, description: '2 or 3 imperative steps, at most 8 words each' },
+    volunteers: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['id', 'reason'],
+        properties: { id: { type: 'string' }, reason: { type: 'string', description: 'At most 10 words' } },
+      },
+    },
+    recommendedCount: { type: 'integer', description: '1 to 3' },
+  };
+  return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties };
 }
+
+const RECOMMENDATION_SYSTEM = `You support the volunteer coordinator at a music festival. They read your answer on a phone, mid-incident, in a few seconds. Be brief, concrete and honest.
+
+You get an incident (from a fire-detection camera model or a person), a shortlist of available volunteers already filtered by code, and sometimes a photo from the camera.
+
+If there is a photo, fill in scene:
+- Judge the scene yourself. The coloured boxes and percentages were drawn by the detection model; they are not evidence.
+- Say plainly what is actually there. If the "fire" is on a phone or screen, or is a candle, a barbecue, stage pyrotechnics or lighting, say so.
+- insight is the single fact in the photo that most changes the response: size or spread, how close people are, what could catch, blocked exits. If the photo is too dark, blurred or distant to tell, say that instead.
+- Never describe anything you cannot see.
+
+summary: one sentence on what matters next. Don't repeat the zone or the incident type.
+actions: 2 or 3 short imperative steps that fit what the photo shows.
+volunteers: shortlist ids only, best first. A volunteer is qualified when qualifiedForThisIncident is true; acceptedQualifications lists acceptable training, best first. Never say nobody qualified is available if someone is.
+recommendedCount: 1 to 3 people in total, counting alreadyAssigned.
+Nobody has been sent unless they are in alreadyAssigned. Never say anyone was dispatched, notified or is on the way.
+If no shortlisted volunteer is qualified, you may suggest reassigning a named busy volunteer from a less urgent job (priority 1 is most urgent). If nobody suitable is available, include calling emergency services.`;
+
+const clip = (s, n) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 
 async function getRecommendation(incident) {
   const fallback = templateRecommendation(incident);
@@ -147,7 +202,7 @@ async function getRecommendation(incident) {
       type: incident.type,
       zone: incident.zoneName,
       detectedBy: incident.sources,
-      confidence: incident.confidence,
+      modelConfidence: incident.confidence,
       note: incident.note || null,
       acceptedQualifications: config.incidentTypes[incident.type].requires.map(q => config.qualifications[q]),
     },
@@ -176,40 +231,52 @@ async function getRecommendation(incident) {
     needsEscalation: incident.needsEscalation,
   };
 
-  const system =
-    'You assist a volunteer coordinator at a music festival. Given an incident and a shortlist of available ' +
-    'volunteers (already filtered by code), respond with ONLY a JSON object, no markdown, in this shape: ' +
-    '{"summary": "max 2 short sentences", "actions": ["3 short imperative actions"], ' +
-    '"volunteers": [{"id": "volunteer id from the shortlist", "reason": "max 12 words"}], ' +
-    '"recommendedCount": 1}. ' +
-    'recommendedCount is an integer from 1 to 3: how many volunteers to send in total, counting anyone in ' +
-    'alreadyAssigned. Rank volunteers best first. Only use ids from the shortlist. Be calm and practical. ' +
-    'Incident priority: 1 is most urgent. ' +
-    'A volunteer is qualified if qualifiedForThisIncident is true. acceptedQualifications lists acceptable training ' +
-    'in priority order (first is best). Never say no qualified volunteers are available if any shortlisted ' +
-    'volunteer has qualifiedForThisIncident true. ' +
-    'If no shortlisted volunteer is qualified, you may recommend reassigning a busy volunteer from a less urgent ' +
-    'incident, naming them and their current job. If no suitable volunteer is available at all, include calling ' +
-    'emergency services in the actions.';
+  // The snapshot is a JPEG data URL from the camera page.
+  const photo = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(incident.snapshot || '');
+  const content = [
+    ...(photo ? [{ type: 'image', source: { type: 'base64', media_type: photo[1], data: photo[2] } }] : []),
+    { type: 'text', text: JSON.stringify(payload) },
+  ];
+  const params = {
+    model: MODEL,
+    max_tokens: 4000,
+    system: RECOMMENDATION_SYSTEM,
+    messages: [{ role: 'user', content }],
+    output_config: {
+      format: { type: 'json_schema', schema: recommendationSchema(!!photo) },
+      ...(MODEL_HAS_EFFORT && { effort: 'low' }),
+    },
+  };
+  const options = { timeout: AI_TIMEOUT_MS, maxRetries: 0 };
 
   try {
-    const resp = await withTimeout(
-      anthropic.messages.create({
-        model: MODEL,
-        max_tokens: 500,
-        system,
-        messages: [{ role: 'user', content: JSON.stringify(payload) }],
-      }),
-      AI_TIMEOUT_MS
-    );
-    const text = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+    // Server-side fallbacks rerun the request on another model if this one declines; Haiku doesn't take them.
+    const resp = MODEL_HAS_EFFORT
+      ? await anthropic.beta.messages.create({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }, options)
+      : await anthropic.messages.create(params, options);
+    if (resp.stop_reason === 'refusal') throw new Error('AI declined');
+    if (resp.stop_reason === 'max_tokens') throw new Error('AI ran out of tokens');
+    const parsed = JSON.parse(resp.content.filter(b => b.type === 'text').map(b => b.text).join(''));
+
     const validIds = new Set(incident.shortlist.map(v => v.id));
-    const vols = (parsed.volunteers || []).filter(v => validIds.has(v.id));
-    if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.actions)) throw new Error('Bad AI shape');
+    const vols = parsed.volunteers.filter(v => validIds.has(v.id)).map(v => ({ id: v.id, reason: clip(v.reason, 90) }));
     const count = Number.isInteger(parsed.recommendedCount)
       ? Math.min(3, Math.max(1, parsed.recommendedCount)) : fallback.recommendedCount;
-    return { source: 'ai', recommendedCount: count, summary: parsed.summary, actions: parsed.actions.slice(0, 4), volunteers: vols };
+    const s = parsed.scene;
+    const scene = s && s.insight ? {
+      confirms: s.confirms,
+      looksLike: clip(s.looksLike, 40),
+      insight: clip(s.insight, 160),
+      peopleNearby: s.peopleNearby,
+    } : null;
+    return {
+      source: 'ai',
+      recommendedCount: count,
+      summary: clip(parsed.summary, 160),
+      scene,
+      actions: parsed.actions.slice(0, 3).map(a => clip(a, 80)),
+      volunteers: vols,
+    };
   } catch (err) {
     console.warn('[ai] falling back to template:', err.message);
     return fallback;
@@ -224,22 +291,28 @@ function handleReport(raw = {}) {
   const source = raw.source === 'volunteer' ? 'volunteer' : 'camera';
   const now = Date.now();
   const confidence = typeof raw.confidence === 'number' ? raw.confidence : source === 'volunteer' ? 1 : null;
+  const automatic = source === 'camera' && !raw.manual;
 
+  // An automatic camera sighting joins any open incident of the same type in the same zone, however
+  // old: a fire that drops out of view and comes back is still the same fire.
   const existing = incidents.find(
-    i => i.type === type && i.zoneId === zoneId && i.status !== 'resolved' && now - i.lastSeen < MERGE_WINDOW_MS
+    i => i.type === type && i.zoneId === zoneId && i.status !== 'resolved' && (automatic || now - i.lastSeen < MERGE_WINDOW_MS)
   );
+  const camera = automatic ? { visible: true, lastSeenAt: now, changedAt: now } : null;
 
   if (existing) {
     existing.lastSeen = now;
     existing.reportCount += 1;
     if (!existing.sources.includes(source)) existing.sources.push(source);
+    let newSnapshot = false;
     if (confidence != null && (existing.confidence == null || confidence > existing.confidence)) {
       existing.confidence = confidence;
-      if (raw.snapshot) existing.snapshot = raw.snapshot;
+      if (raw.snapshot) { existing.snapshot = raw.snapshot; newSnapshot = true; }
     }
-    if (!existing.snapshot && raw.snapshot) existing.snapshot = raw.snapshot;
+    if (!existing.snapshot && raw.snapshot) { existing.snapshot = raw.snapshot; newSnapshot = true; }
     if (raw.note) existing.note = raw.note;
-    io.emit('incident:updated', existing);
+    if (camera) existing.camera = existing.camera?.visible ? { ...existing.camera, lastSeenAt: now } : camera;
+    emitUpdate(existing, newSnapshot);
     return { id: existing.id, merged: true };
   }
 
@@ -258,6 +331,8 @@ function handleReport(raw = {}) {
     lastSeen: now,
     reportCount: 1,
     status: 'open', // open (nobody assigned) <-> dispatched (1+ assigned) -> resolved
+    outcome: null, // once resolved: 'resolved' or 'false_alarm'
+    camera, // automatic camera incidents: { visible, lastSeenAt, changedAt }, kept current by camera:status
     assignments: [], // { volunteerId, name, status: sent -> accepted -> arrived, assignedAt }
     shortlist: [],
     busyCandidates: [],
@@ -271,7 +346,7 @@ function handleReport(raw = {}) {
 
   getRecommendation(incident).then(rec => {
     incident.recommendation = rec;
-    io.emit('incident:updated', incident);
+    emitUpdate(incident);
   });
 
   return { id: incident.id, merged: false };
@@ -283,7 +358,7 @@ function refreshOpenShortlists() {
     .filter(i => i.status !== 'resolved')
     .forEach(i => {
       setCandidates(i);
-      io.emit('incident:updated', i);
+      emitUpdate(i);
     });
 }
 
@@ -390,7 +465,7 @@ io.on('connection', socket => {
     };
     console.log(`[dispatch] ${v.name} -> ${inc.id}`);
     if (v.socketId) io.to(v.socketId).emit('assignment', v.assignment);
-    io.emit('incident:updated', inc);
+    emitUpdate(inc);
     broadcastVolunteers();
     if (typeof ack === 'function') ack({ ok: true, delivered: !!v.socketId });
     refreshOpenShortlists(); // other open incidents now see this volunteer as busy
@@ -403,7 +478,7 @@ io.on('connection', socket => {
     if (!entry || !['accepted', 'arrived'].includes(status)) return;
     entry.status = status;
     if (v.assignment) v.assignment.status = status;
-    io.emit('incident:updated', inc);
+    emitUpdate(inc);
     broadcastVolunteers();
   });
 
@@ -422,20 +497,40 @@ io.on('connection', socket => {
     refreshOpenShortlists();
   });
 
-  socket.on('incident:resolve', ({ incidentId } = {}) => {
+  // outcome is 'resolved' or 'false_alarm'. Both free the volunteers. Neither silences the camera:
+  // if it still sees fire, the next sighting raises a new alert.
+  function closeIncident(incidentId, outcome) {
     const inc = incidents.find(i => i.id === incidentId);
-    if (!inc) return;
+    if (!inc || inc.status === 'resolved') return;
     inc.status = 'resolved';
+    inc.outcome = outcome;
+    inc.resolvedAt = Date.now();
+    const falseAlarm = outcome === 'false_alarm';
     for (const a of inc.assignments) {
       const v = volunteers.find(x => x.id === a.volunteerId);
       if (!v) continue;
       v.status = 'available';
       v.assignment = null;
-      if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId, resolved: true });
+      if (v.socketId) io.to(v.socketId).emit('assignment:cancelled', { incidentId, resolved: !falseAlarm, falseAlarm });
     }
-    io.emit('incident:updated', inc);
+    console.log(`[incident] ${inc.id} closed as ${outcome}`);
+    emitUpdate(inc);
     broadcastVolunteers();
     refreshOpenShortlists();
+  }
+  socket.on('incident:resolve', ({ incidentId } = {}) => closeIncident(incidentId, 'resolved'));
+  socket.on('incident:dismiss', ({ incidentId } = {}) => closeIncident(incidentId, 'false_alarm'));
+
+  // Live "is it still in view?" from the camera, so the coordinator can see whether a fire is still burning.
+  socket.on('camera:status', ({ type, zoneId, visible, confidence } = {}) => {
+    const inc = incidents.find(i => i.type === type && i.zoneId === zoneId && i.status !== 'resolved' && i.camera);
+    if (!inc) return;
+    const now = Date.now();
+    const changed = inc.camera.visible !== !!visible;
+    inc.camera = { visible: !!visible, lastSeenAt: visible ? now : inc.camera.lastSeenAt, changedAt: changed ? now : inc.camera.changedAt };
+    if (visible) inc.lastSeen = now;
+    if (typeof confidence === 'number' && confidence > (inc.confidence ?? 0)) inc.confidence = confidence;
+    emitUpdate(inc);
   });
 
   socket.on('disconnect', () => {

@@ -9,58 +9,145 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="style.css">
   <style>
-    .page { max-width: 1100px; }
-    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
-    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
-    video, #overlay { width: 100%; border-radius: var(--radius); display: block; }
-    .feed { position: relative; background: #000; border-radius: var(--radius); }
-    #overlay { position: absolute; inset: 0; height: 100%; pointer-events: none; }
-    .live { position: absolute; top: .6rem; left: .6rem; }
-    #qr { background: #fff; padding: .6rem; border-radius: 8px; width: max-content; margin: .5rem 0; }
-    #log { max-height: 220px; overflow: auto; font-size: .9rem; }
+    /* The video sits on a "monitor plate" whose colour is the detection state. Everything else stays quiet. */
+    .page { max-width: 1240px; }
+    .num { font-variant-numeric: tabular-nums; }
+    .topbar { flex-wrap: wrap; row-gap: .5rem; }
+    .topbar h1 { white-space: nowrap; }
+    .topbar .where { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; justify-content: flex-end; }
+    .location { display: flex; align-items: center; gap: .5rem; font-size: .875rem; color: var(--muted); }
+    .location select {
+      min-height: 40px; padding: .4rem 2rem .4rem .7rem; font: inherit; font-size: 15px; font-weight: 500; color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    }
+
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 1.25rem; align-items: start; }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .location-label { display: none; } }
+
+    .stage {
+      --plate: #1e2836; --ring: transparent; --copy: #c3cdd9;
+      --bar-fire: #ff7a59; --bar-smoke: #b8c2cf; --bar-none: rgba(255, 255, 255, .25);
+      background: var(--plate); color: #fff; border-radius: 16px; padding: 8px;
+      box-shadow: 0 0 0 3px var(--ring);
+      transition: background-color .25s ease, box-shadow .25s ease;
+    }
+    .stage[data-phase="checking"] { --plate: #4d3305; --ring: #f0a020; --copy: #f5e3bf; }
+    .stage[data-phase="smoke"] { --plate: #323c49; --ring: #8d99a8; }
+    .stage[data-phase="fire"] { --plate: #b42318; --ring: #ff7a59; --copy: #ffe1d9; --bar-fire: #ffd5c9; --bar-smoke: #f3b7a8; --bar-none: rgba(255, 255, 255, .35); }
+    .stage[data-phase="error"] { --ring: #b42318; }
+    .stage.alarm { animation: alarm 1s ease-out 3; }
+    @keyframes alarm { from { box-shadow: 0 0 0 3px var(--ring), 0 0 0 0 rgba(217, 58, 38, .65); } to { box-shadow: 0 0 0 3px var(--ring), 0 0 0 22px rgba(217, 58, 38, 0); } }
+
+    .feed { position: relative; border-radius: 10px; overflow: hidden; background: #111821; aspect-ratio: 16 / 9; }
+    .feed video, .feed canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .feed video { object-fit: contain; }
+    .burnin {
+      position: absolute; top: .6rem; left: .6rem; right: .6rem; display: flex; justify-content: space-between; gap: .5rem;
+      font-size: .85rem; font-weight: 600; pointer-events: none;
+    }
+    .burnin span { background: rgba(17, 24, 33, .62); padding: .2rem .6rem; border-radius: 6px; }
+    .burnin .on-air::before { content: ""; display: inline-block; width: .5rem; height: .5rem; margin-right: .4rem; border-radius: 50%; background: #3ccf7f; vertical-align: .05rem; }
+    .burnin .on-air.off::before { background: #8d99a8; }
+    .feed-message { position: absolute; inset: 0; display: grid; place-items: center; padding: 1rem; text-align: center; color: var(--copy); }
+    .feed-message[hidden] { display: none; }
+
+    .caption { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 250px); gap: 1rem 1.5rem; align-items: end; padding: 1rem .75rem .6rem; }
+    @media (max-width: 560px) { .caption { grid-template-columns: 1fr; } }
+    .caption h2 { font-size: 1.65rem; line-height: 1.2; letter-spacing: -.01em; margin: 0 0 .3rem; }
+    .caption p { color: var(--copy); margin: 0; max-width: 60ch; }
+    .caption .actions:not(:empty) { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+    .caption .actions button { background: #fff; border-color: #fff; color: #1a1f29; }
+    .caption .actions button:hover { background: #e9edf2; border-color: #e9edf2; }
+    .stage :focus-visible { outline-color: #fff; }
+    .evidence { margin: 0; }
+    .evidence canvas { display: block; width: 100%; height: 44px; border-radius: 6px; background: rgba(0, 0, 0, .2); }
+    .evidence figcaption { font-size: .8rem; color: var(--copy); margin-top: .35rem; }
+
+    .side h2 { font-size: 1rem; }
+    .sent { display: grid; grid-template-columns: auto 1fr; gap: .1rem .75rem; padding: .65rem 0; border-top: 1px solid var(--border); }
+    .sent:first-of-type { border-top: 0; padding-top: .25rem; }
+    .sent time { font-size: .875rem; color: var(--muted); }
+    .sent p { grid-column: 2; margin: 0; font-size: .9rem; }
+    .sent .closed { color: var(--muted); }
+    .report { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .6rem; }
+    .report button { padding: .55rem .4rem; }
+
+    .threshold-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
+    input[type=range] { width: 100%; accent-color: var(--accent); margin: .6rem 0 .2rem; min-height: 28px; }
+    .range-ends { display: flex; justify-content: space-between; }
+
+    details.panel summary { cursor: pointer; font-weight: 600; min-height: 28px; display: flex; align-items: center; }
+    #qr { background: #fff; padding: .6rem; border-radius: 8px; width: max-content; margin: .75rem 0 .4rem; border: 1px solid var(--border); }
+    #qrUrl { word-break: break-all; }
+
+    @media (prefers-reduced-motion: reduce) { .stage { transition: none; } .stage.alarm { animation: none; } }
   </style>
 </head>
 <body>
 <div class="page">
-  <div class="topbar">
-    <h1 id="title">Camera</h1>
-    <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
-  </div>
+  <header class="topbar">
+    <h1><span id="zoneTitle">Camera</span></h1>
+    <div class="where">
+      <label class="location"><span class="location-label">Location</span> <select id="zone" aria-label="Camera location"></select></label>
+      <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
+    </div>
+  </header>
 
-  <div class="grid">
-    <div>
-      <div class="feed">
+  <main class="layout">
+    <section class="stage" id="stage" data-phase="loading" aria-labelledby="statusTitle">
+      <div class="feed" id="feed">
         <video id="cam" autoplay playsinline muted></video>
         <canvas id="overlay"></canvas>
-        <span class="tag fire live" id="liveTag">Live</span>
-      </div>
-      <p class="muted small" id="camStatus">Starting camera…</p>
-    </div>
-
-    <div>
-      <div class="panel">
-        <h2>Join as a volunteer</h2>
-        <p class="muted small">Scan with your phone camera.</p>
-        <div id="qr"></div>
-        <p class="small" id="qrUrl"></p>
-      </div>
-
-      <div class="panel">
-        <h2>Manual trigger</h2>
-        <p class="muted small">Backup if detection misses. Sends the current frame.</p>
-        <div class="row">
-          <button class="danger" data-type="fire">Fire</button>
-          <button class="secondary" data-type="overcrowding">Overcrowding</button>
-          <button class="secondary" data-type="medical">Medical</button>
+        <div class="burnin" aria-hidden="true">
+          <span id="burnZone">Camera</span>
+          <span class="on-air off num" id="clock"></span>
         </div>
+        <div class="feed-message" id="feedMessage">Starting camera…</div>
       </div>
+      <div class="caption">
+        <div role="status" aria-live="polite">
+          <h2 id="statusTitle">Getting ready</h2>
+          <p id="statusCopy">Loading the fire model on this laptop.</p>
+          <div class="actions" id="statusActions"></div>
+        </div>
+        <figure class="evidence">
+          <canvas id="evidence" aria-hidden="true"></canvas>
+          <figcaption id="evidenceCaption">Each mark is one checked frame from the last 3 seconds</figcaption>
+        </figure>
+      </div>
+    </section>
 
-      <div class="panel">
-        <h2>Sent reports</h2>
-        <div id="log" class="muted">None yet.</div>
-      </div>
-    </div>
-  </div>
+    <aside class="side">
+      <section class="panel">
+        <h2>Alerts from this camera</h2>
+        <div id="alerts"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Report something the camera missed</h2>
+        <p class="muted small">Sends the current frame to the coordinator straight away.</p>
+        <div class="report">
+          <button class="danger" data-type="fire">Fire</button>
+          <button class="secondary" data-type="medical">Medical</button>
+          <button class="secondary" data-type="overcrowding">Crowding</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <label class="threshold-head" for="threshold">Confidence needed <output id="thresholdValue" class="num">50%</output></label>
+        <input type="range" id="threshold" min="25" max="85" step="5" value="50">
+        <div class="range-ends small muted"><span>Catches more</span><span>Fewer false alarms</span></div>
+        <p class="small muted num" id="perf">Model loading</p>
+      </section>
+
+      <details class="panel">
+        <summary>Volunteer sign-up QR code</summary>
+        <div id="qr"></div>
+        <p class="small muted" id="qrUrl"></p>
+      </details>
+    </aside>
+  </main>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -68,18 +155,62 @@
 <script src="common.js"></script>
 <script>
   const socket = io();
+  const { esc } = FD;
   const video = document.getElementById('cam');
+  const stage = document.getElementById('stage');
+  const zoneSelect = document.getElementById('zone');
+  const clockTime = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const shortTime = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
   let config = null;
+  let zoneId = null;
+  let incidents = new Map();
+  let camera = { state: 'starting', error: null }; // starting | live | error
+  let detection = { phase: 'loading' };
 
-  socket.on('connect', () => { dot.classList.add('on'); conn.textContent = 'Connected'; });
-  socket.on('disconnect', () => { dot.classList.remove('on'); conn.textContent = 'Reconnecting'; });
+  // ---------- Server ----------
+  socket.on('connect', () => { dot.classList.add('on'); conn.textContent = 'Connected'; render(); });
+  socket.on('disconnect', () => { dot.classList.remove('on'); conn.textContent = 'Reconnecting'; render(); });
+  socket.on('state', s => {
+    incidents = new Map(s.incidents.map(i => [i.id, i]));
+    render();
+  });
+  socket.on('incident:new', i => { incidents.set(i.id, i); render(); });
+  socket.on('incident:updated', i => {
+    const before = incidents.get(i.id);
+    incidents.set(i.id, { ...before, ...i });
+    if (i.status === 'resolved' && before?.status !== 'resolved') window.detector?.incidentClosed(i.id);
+    render();
+  });
 
-  // ---- Camera ----
-  navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
-    .then(stream => { video.srcObject = stream; camStatus.textContent = 'Camera running.'; })
-    .catch(err => { camStatus.textContent = 'Camera blocked: allow camera access in the browser and reload. (' + err.name + ')'; });
+  // ---------- Camera ----------
+  async function startCamera() {
+    camera = { state: 'starting', error: null };
+    render();
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('insecure'), { name: 'InsecureContext' });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      stream.getVideoTracks()[0].onended = () => {
+        camera = { state: 'error', error: 'The camera disconnected. Plug it back in or close other apps using it, then try again.' };
+        render();
+      };
+      video.srcObject = stream;
+      await video.play();
+      feed.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`; // keeps boxes aligned with the picture
+      camera = { state: 'live', error: null };
+    } catch (err) {
+      const messages = {
+        NotAllowedError: 'Camera access is blocked. Allow the camera in the address bar, then try again.',
+        NotFoundError: 'No camera found. Connect a webcam, then try again.',
+        NotReadableError: 'Another app is using the camera. Close it (or the Firewatch page), then try again.',
+        InsecureContext: 'Cameras only work on localhost or HTTPS. Open this page through your ngrok link.',
+      };
+      camera = { state: 'error', error: messages[err.name] || `The camera could not start (${err.name}).` };
+    }
+    render();
+  }
 
-  // Grab the current frame as a small JPEG data URL (optionally with the overlay canvas drawn on top).
+  // Current frame (with detection boxes) as a small JPEG data URL.
   window.getCameraFrame = function (maxWidth = 480, quality = 0.6) {
     if (!video.videoWidth) return null;
     const scale = Math.min(1, maxWidth / video.videoWidth);
@@ -93,53 +224,162 @@
     return c.toDataURL('image/jpeg', quality);
   };
 
-  // ---- THE function the detector calls ----
-  // reportIncident({ type: 'fire' | 'overcrowding' | 'medical', confidence: 0..1, snapshot?: dataURL, note?: string })
+  // ---------- Reporting (called by detector.js and the manual buttons) ----------
+  // reportIncident({ type, confidence: 0..1, note?, manual? }) -> Promise<{ id, merged } | null>
   const lastSent = {};
   window.reportIncident = function (event) {
-    // Throttle to one report per type per second; the server merges repeats anyway.
     const now = Date.now();
-    if (lastSent[event.type] && now - lastSent[event.type] < 1000) return;
+    if (lastSent[event.type] && now - lastSent[event.type] < 1000) return Promise.resolve(null);
     lastSent[event.type] = now;
-    const payload = {
-      source: 'camera',
-      zoneId: config?.cameraZoneId,
-      timestamp: Date.now(),
-      snapshot: getCameraFrame(),
-      ...event,
-    };
-    socket.emit('incident:report', payload, result => addLog(payload, result));
+    const payload = { source: 'camera', zoneId, timestamp: now, snapshot: getCameraFrame(), ...event };
+    return new Promise(resolve => socket.emit('incident:report', payload, resolve));
   };
+  window.reportCameraStatus = (type, visible, confidence) =>
+    socket.emit('camera:status', { type, zoneId, visible, confidence });
 
-  function addLog(p, result) {
-    if (log.textContent === 'None yet.') log.innerHTML = '';
-    const line = document.createElement('div');
-    const conf = p.confidence != null ? ` ${(p.confidence * 100).toFixed(0)}%` : '';
-    line.textContent = `${new Date().toLocaleTimeString()}  ${p.type}${conf}  ${result?.error ? 'ERROR ' + result.error : result?.merged ? '(merged into ' + result.id + ')' : '→ ' + result?.id}`;
-    log.prepend(line);
+  document.querySelectorAll('[data-type]').forEach(b => b.addEventListener('click', () => {
+    reportIncident({ type: b.dataset.type, confidence: 1, manual: true, note: 'Reported manually at the camera desk' });
+  }));
+
+  // ---------- Location ----------
+  function setZone(id) {
+    if (zoneId && id !== zoneId) window.detector?.reset(); // tells the coordinator the old spot is clear
+    zoneId = id;
+    zoneSelect.value = id;
+    const name = config.zones[id].name;
+    zoneTitle.textContent = `${name} camera`;
+    burnZone.textContent = name;
+    document.title = `${name} camera | MaydAI`;
+    const url = new URL(location.href);
+    url.searchParams.set('zone', id);
+    history.replaceState(null, '', url);
+    render();
+  }
+  zoneSelect.addEventListener('change', () => setZone(zoneSelect.value));
+
+  // ---------- Detection ----------
+  window.addEventListener('detector:update', e => {
+    const wasFire = detection.phase === 'fire';
+    detection = e.detail;
+    if (detection.phase === 'fire' && !wasFire) {
+      stage.classList.remove('alarm');
+      void stage.offsetWidth; // restart the animation
+      stage.classList.add('alarm');
+    }
+    render();
+  });
+  threshold.addEventListener('input', () => { thresholdValue.value = `${threshold.value}%`; });
+
+  // ---------- Rendering ----------
+  const zoneIncidents = () => [...incidents.values()]
+    .filter(i => i.zoneId === zoneId && i.sources.includes('camera'))
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  function names(list) {
+    return list.length < 3 ? list.join(' and ') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
+  }
+  function dispatchLine(i) {
+    if (i.status === 'resolved') return i.outcome === 'false_alarm' ? 'Marked as a false alarm' : 'Resolved';
+    if (!i.assignments.length) return 'Waiting for the coordinator to send someone';
+    const by = s => i.assignments.filter(a => a.status === s).map(a => a.name);
+    const parts = [];
+    if (by('arrived').length) parts.push(`${names(by('arrived'))} arrived`);
+    if (by('accepted').length) parts.push(`${names(by('accepted'))} on the way`);
+    if (by('sent').length) parts.push(`${names(by('sent'))} notified`);
+    return parts.join('. ');
   }
 
-  document.querySelectorAll('[data-type]').forEach(b =>
-    b.addEventListener('click', () => reportIncident({ type: b.dataset.type, confidence: 1, note: 'Manual trigger' }))
-  );
+  // One headline for the whole page: camera problems first, then what the model sees.
+  function currentStatus() {
+    if (camera.state === 'error') return { phase: 'error', title: 'Camera is off', copy: camera.error, action: ['retry', 'Try again'] };
+    if (camera.state === 'starting') return { phase: 'loading', title: 'Starting camera', copy: 'Allow camera access if your browser asks.' };
+    const p = detection.phase;
+    if (p === 'loading') return { phase: 'loading', title: 'Getting ready', copy: 'Loading the fire model. Video stays on this laptop; only a confirmed alert sends one photo.' };
+    if (p === 'model-error') return { phase: 'error', title: 'Detection paused', copy: `${detection.error} Retrying in a few seconds. Use the manual buttons meanwhile.` };
 
-  // ---- Config, title, QR ----
+    const open = zoneIncidents().find(i => i.type === 'fire' && i.status !== 'resolved');
+    if (p === 'fire') {
+      if (!socket.connected) return { phase: 'fire', title: 'Fire confirmed', copy: 'Can’t reach the MaydAI server. Radio the coordinator now.' };
+      if (!open) return { phase: 'fire', title: 'Fire confirmed', copy: 'Alerting the coordinator…' };
+      return { phase: 'fire', title: 'Fire confirmed', copy: `Coordinator alerted at ${clockTime(open.createdAt)}. ${dispatchLine(open)}.` };
+    }
+    if (p === 'checking') return { phase: 'checking', title: 'Possible fire', copy: 'Checking the next few seconds before alerting the coordinator.' };
+    if (p === 'smoke') return { phase: 'smoke', title: 'Possible smoke', copy: 'Smoke alone doesn’t alert anyone, since stages use haze. Watching for flames.' };
+    if (open?.camera && !open.camera.visible) return { phase: 'watching', title: 'Fire no longer in view', copy: `Alert still open. ${dispatchLine(open)}.` };
+    return { phase: 'watching', title: 'Watching for fire', copy: 'Nothing in view right now.' };
+  }
+
+  function captionText() {
+    const f = detection.fire;
+    if (camera.state !== 'live' || !f) return 'Each mark is one checked frame from the last 3 seconds';
+    if (detection.phase === 'checking') return `Fire in ${f.hits} of ${f.total} frames. Alerts at ${f.needed}.`;
+    if (detection.phase === 'fire') return `Fire in ${f.hits} of ${f.total} recent frames`;
+    if (detection.phase === 'smoke') return `Smoke in ${detection.smoke.hits} of ${detection.smoke.total} frames`;
+    return 'Each mark is one checked frame from the last 3 seconds';
+  }
+
+  // Only touch the DOM when text changes, so screen readers announce real changes, not every frame.
+  const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+
+  function render() {
+    if (!config) return;
+    const s = currentStatus();
+    stage.dataset.phase = s.phase;
+    setText(statusTitle, s.title);
+    setText(statusCopy, s.copy);
+    const actionKey = s.action ? s.action.join() : '';
+    if (statusActions.dataset.key !== actionKey) {
+      statusActions.dataset.key = actionKey;
+      statusActions.innerHTML = s.action ? `<button data-action="${s.action[0]}">${esc(s.action[1])}</button>` : '';
+    }
+    setText(evidenceCaption, captionText());
+    feedMessage.hidden = camera.state === 'live';
+    setText(feedMessage, camera.state === 'error' ? 'No picture' : 'Starting camera…');
+    clock.classList.toggle('off', camera.state !== 'live');
+    setText(perf, detection.ms != null
+      ? `Checking ${detection.fps.toFixed(1)} frames a second on this laptop (${Math.round(detection.ms)} ms each)`
+      : detection.phase === 'model-error' ? 'Model not running' : detection.phase === 'loading' ? 'Model loading' : 'Model ready. Waiting for the camera.');
+
+    const list = zoneIncidents().slice(0, 6);
+    const alertsHtml = list.length ? list.map(i => `
+      <div class="sent">
+        <span class="tag ${i.type}">${esc(i.typeLabel)}</span>
+        <time class="num">${shortTime(i.createdAt)}</time>
+        <p class="${i.status === 'resolved' ? 'closed' : ''}">${esc(dispatchLine(i))}</p>
+        ${i.recommendation?.scene ? `<p class="closed">AI: ${esc(i.recommendation.scene.looksLike)}</p>` : ''}
+      </div>`).join('')
+      : `<p class="muted small">None yet. When fire is confirmed, the coordinator is alerted automatically with a photo from this camera.</p>`;
+    if (alertsEl.dataset.html !== alertsHtml) { alertsEl.dataset.html = alertsHtml; alertsEl.innerHTML = alertsHtml; }
+  }
+  const alertsEl = document.getElementById('alerts');
+
+  document.addEventListener('click', e => {
+    const a = e.target.closest('[data-action]');
+    if (a?.dataset.action === 'retry') startCamera();
+  });
+
+  setInterval(() => { clock.textContent = clockTime(Date.now()); }, 1000);
+  clock.textContent = clockTime(Date.now());
+
+  // ---------- Start ----------
   fetch('/api/config').then(r => r.json()).then(c => {
     config = c;
-    const camZone = c.zones[c.cameraZoneId].name;
-    title.textContent = `${camZone} camera`;
-    document.title = `${camZone} camera | MaydAI`;
+    zoneSelect.innerHTML = Object.entries(c.zones).map(([id, z]) => `<option value="${id}">${esc(z.name)}</option>`).join('');
+    const requested = new URLSearchParams(location.search).get('zone');
+    setZone(c.zones[requested] ? requested : c.cameraZoneId);
+
     const base = c.publicUrl || location.origin;
     const url = base.replace(/\/$/, '') + '/volunteer.html';
     if (window.QRCode) new QRCode(document.getElementById('qr'), { text: url, width: 180, height: 180 });
     else document.getElementById('qr').hidden = true; // QR library needs internet
     qrUrl.textContent = url;
     if (!c.publicUrl && location.hostname === 'localhost') {
-      qrUrl.textContent += '  (localhost won\u2019t work on phones: set PUBLIC_URL in .env to your ngrok URL)';
+      qrUrl.textContent += ' (phones can’t open localhost: set PUBLIC_URL in .env to your ngrok link)';
     }
+    startCamera();
   });
 </script>
-<!-- Detection lives in its own file so the detection teammate never conflicts with this page. -->
-<script src="detector.js"></script>
+<!-- Detection runs as a module: it loads the model in a worker and calls reportIncident above. -->
+<script type="module" src="detector.js"></script>
 </body>
 </html>
