@@ -340,18 +340,27 @@
           data-confirm="${esc(`Take ${v.name} off ${v.currentTypeLabel} at ${v.currentZoneName}?`)}">Pull</button>
       </div>`).join('')}` : '';
 
-    const clips = i.audioClips?.length ? `
-      <div class="clips">
-        ${i.audioClips.map(c => `
-        <div class="voice-clip">
-          <div class="row">
-            <span class="small"><strong>${esc(c.volunteerName)}</strong>
-              <span class="muted">${clock(c.ts)}, ${fmtDuration(c.durationSec)}</span></span>
-            <a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>
-          </div>
-          <audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>
-        </div>`).join('')}
-      </div>` : '';
+    // Each volunteer report: what they typed, what they said (transcribed after it arrived) and their clip.
+    const clipInfo = new Map((i.audioClips || []).map(c => [c.id, c]));
+    const said = (r, c) => r.transcriptStatus === 'done' ? `<p class="description">Said: ${esc(r.transcript)}</p>`
+      : r.transcriptStatus === 'pending' ? '<p class="small muted">Transcribing…</p>'
+      : r.transcriptStatus === 'unavailable' ? `<p class="small muted">No transcript available${c ? ', listen to the clip' : ''}</p>` : '';
+    const reports = i.reports?.length ? `
+      <h3 style="margin-top:.6rem">Reports</h3>
+      ${[...i.reports].sort((a, b) => a.ts - b.ts).map(r => {
+        const c = clipInfo.get(r.clipId);
+        return `
+      <div class="report-entry">
+        <div class="row">
+          <span class="small"><strong>${esc(r.volunteerName)}</strong>
+            <span class="muted">${new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${c ? `, ${fmtDuration(c.durationSec)}` : ''}</span></span>
+          ${c ? `<a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>` : ''}
+        </div>
+        ${r.typedNote ? `<p class="description">Typed: ${esc(r.typedNote)}</p>` : ''}
+        ${said(r, c)}
+        ${c ? `<audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>` : ''}
+      </div>`;
+      }).join('')}` : '';
 
     const rec = i.recommendation;
     return `
@@ -362,7 +371,7 @@
         ${i.note && !i.camera && i.sources.includes('volunteer') ? `<p class="description">“${esc(i.note)}”</p>` : ''}
         ${i.reclassifiedFrom ? `<p class="small muted">AI reclassified from ${esc(i.reclassifiedFrom)}: ${esc(i.classificationReason || '')}</p>`
           : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI assessment: ${esc(i.classificationReason)}</p>` : ''}
-        ${clips}
+        ${reports}
         ${situation(i)}
         ${open ? decision(i) : ''}
         ${team}
