@@ -217,7 +217,10 @@
 
   // ---- Voice input: record a clip and transcribe it at the same time ----
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  // On iPhone/iPad, recording and transcription compete for the mic and neither works reliably together,
+  // so Safari only transcribes there. Browsers that can't transcribe (e.g. Chrome on iPhone) still record a clip.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && !(isIOS && SpeechRecognition);
   const MAX_SECONDS = 60;
   const MIC_ICON = micBtn.querySelector('svg').outerHTML;
   const STOP_ICON = '<svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
