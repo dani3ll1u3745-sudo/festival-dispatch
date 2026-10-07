@@ -508,11 +508,22 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/audio/:id', (req, res) => {
   const clip = audioClips.get(req.params.id);
   if (!clip) return res.status(404).send('Not found');
-  res.set('Content-Type', clip.mime);
+  res.set({ 'Content-Type': clip.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
   if (req.query.download === '1') {
     res.attachment(`maydai-${clip.incidentId}-${clip.n}.${audioExt(clip.mime)}`);
   }
-  res.send(clip.buffer);
+  // Safari only plays media from servers that answer byte-range requests, so honour them.
+  const size = clip.buffer.length;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (!m || (!m[1] && !m[2])) return res.send(clip.buffer);
+  const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2])); // "bytes=-N" means the last N bytes
+  const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  if (start >= size || start > end) {
+    res.set('Content-Range', `bytes */${size}`);
+    return res.status(416).end();
+  }
+  res.status(206).set('Content-Range', `bytes ${start}-${end}/${size}`);
+  res.send(clip.buffer.subarray(start, end + 1));
 });
 
 // Volunteer pages post a recorded clip here and get its text back to review before sending the report.
