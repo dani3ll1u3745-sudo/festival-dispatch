@@ -29,6 +29,13 @@ let incidentCounter = 1;
 let volunteerCounter = 1;
 let startZoneCounter = 0;
 
+// Volunteer voice clips. Bytes stay here and are served over HTTP; sockets only carry the metadata.
+const audioClips = new Map(); // id -> { buffer, mime, durationSec, volunteerName, ts, incidentId, n }
+let clipCounter = 1;
+const AUDIO_MAX_BYTES = 3 * 1024 * 1024;
+const AUDIO_TYPES = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
+const audioExt = mime => Object.entries(AUDIO_TYPES).find(([t]) => mime.startsWith(t))?.[1];
+
 // ---------- Helpers ----------
 const zone = id => config.zones[id];
 
@@ -178,6 +185,7 @@ async function getRecommendation(incident) {
       qualifications: (volunteers.find(v => v.id === a.volunteerId)?.qualifications || []).map(q => config.qualifications[q]),
     })),
     needsEscalation: incident.needsEscalation,
+    ...(incident.voiceOnly && { voiceClip: 'Volunteer sent a voice clip without text; the coordinator should listen to it.' }),
   };
 
   const system =
@@ -290,6 +298,26 @@ async function classifyIncident(incident) {
   }
 }
 
+// Validates a clip from a report; returns { clip } or { error }. Nothing is stored yet.
+function readAudio(audio) {
+  if (!audio) return {};
+  const mime = typeof audio.mime === 'string' ? audio.mime : '';
+  const data = audio.data;
+  if (!Buffer.isBuffer(data) || !data.length) return { error: 'Voice clip was empty' };
+  if (!audioExt(mime)) return { error: 'Voice clip format not supported' };
+  if (data.length > AUDIO_MAX_BYTES) return { error: 'Voice clip is too large' };
+  const durationSec = Math.max(0, Math.min(600, Math.round(Number(audio.durationSec) || 0)));
+  return { clip: { buffer: data, mime, durationSec } };
+}
+
+function attachClip(incident, clip, volunteerName) {
+  incident.audioClips = incident.audioClips || [];
+  const id = `clip-${clipCounter++}`;
+  const ts = Date.now();
+  audioClips.set(id, { ...clip, volunteerName, ts, incidentId: incident.id, n: incident.audioClips.length + 1 });
+  incident.audioClips.push({ id, mime: clip.mime, durationSec: clip.durationSec, volunteerName, ts });
+}
+
 // ---------- Core: incoming incident reports ----------
 function handleReport(raw = {}) {
   const type = raw.type;
@@ -301,6 +329,9 @@ function handleReport(raw = {}) {
 
   const described = isDescription(raw);
   const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 1000) : null;
+  // A bad clip never blocks the report itself; the volunteer is told it wasn't attached.
+  const { clip, error: audioError } = readAudio(raw.audio);
+  const reporterName = volunteers.find(v => v.id === raw.reporterId)?.name || 'Volunteer';
 
   // 'other' incidents are never merged: two different "other" problems in one zone are usually unrelated.
   const existing = type !== 'other' && incidents.find(
@@ -319,8 +350,9 @@ function handleReport(raw = {}) {
     // Volunteer descriptions accumulate; other notes only fill an empty note, so they never wipe a description.
     if (note && described) existing.note = existing.note ? `${existing.note} | ${note}` : note;
     else if (note && !existing.note) existing.note = note;
+    if (clip) attachClip(existing, clip, reporterName);
     io.emit('incident:updated', existing);
-    return { id: existing.id, merged: true };
+    return { id: existing.id, merged: true, ...(audioError && { audioError }) };
   }
 
   const incident = {
@@ -347,7 +379,9 @@ function handleReport(raw = {}) {
     busyCandidates: [],
     needsEscalation: false,
     recommendation: null,
+    voiceOnly: !!clip && !described, // a clip with no typed or transcribed text: the AI can't hear it
   };
+  if (clip) attachClip(incident, clip, reporterName);
   setCandidates(incident);
   incidents.unshift(incident);
   console.log(`[incident] ${incident.id} ${type} at ${incident.zoneName} via ${source}`);
@@ -367,7 +401,7 @@ function handleReport(raw = {}) {
       io.emit('incident:updated', incident);
     });
 
-  return { id: incident.id, merged: false };
+  return { id: incident.id, merged: false, ...(audioError && { audioError }) };
 }
 
 // Refreshes every unresolved incident, so more people can be added to one that already has someone.
@@ -386,6 +420,16 @@ const broadcastVolunteers = () => io.emit('volunteers:updated', volunteers.map(p
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/audio/:id', (req, res) => {
+  const clip = audioClips.get(req.params.id);
+  if (!clip) return res.status(404).send('Not found');
+  res.set('Content-Type', clip.mime);
+  if (req.query.download === '1') {
+    res.attachment(`maydai-${clip.incidentId}-${clip.n}.${audioExt(clip.mime)}`);
+  }
+  res.send(clip.buffer);
+});
 
 app.get('/api/config', (req, res) => {
   res.json({ ...config, publicUrl: process.env.PUBLIC_URL || null, aiEnabled: !!anthropic });

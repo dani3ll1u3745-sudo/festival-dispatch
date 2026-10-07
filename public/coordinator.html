@@ -86,6 +86,7 @@
 
   const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
   const assignmentLabel = { sent: 'Notified', accepted: 'On the way', arrived: 'Arrived' };
+  const fmtDuration = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const PHONE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   // Incident ids the coordinator has opened, kept across re-renders so live updates don't collapse them.
   const expandedResolved = new Set();
@@ -177,6 +178,18 @@
         <img src="${i.snapshot}" alt="Camera frame at detection">
       </button>` : '';
 
+    const clips = i.audioClips?.length ? `
+      <h3 style="margin-top:.6rem">Voice clips</h3>
+      ${i.audioClips.map(c => `
+      <div class="voice-clip">
+        <div class="row">
+          <span class="small"><strong>${esc(c.volunteerName)}</strong>
+            <span class="muted">${new Date(c.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, ${fmtDuration(c.durationSec)}</span></span>
+          <a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>
+        </div>
+        <audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>
+      </div>`).join('')}` : '';
+
     return `
       <article class="panel incident ${i.type} ${i.status}">
         ${open
@@ -186,6 +199,7 @@
         ${i.note ? `<p class="description">“${esc(i.note)}”</p>` : ''}
         ${i.reclassifiedFrom ? `<p class="small muted">AI reclassified from ${esc(i.reclassifiedFrom)}: ${esc(i.classificationReason || '')}</p>`
           : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI assessment: ${esc(i.classificationReason)}</p>` : ''}
+        ${clips}
         <div class="summary-row">
           ${thumb}
           ${rec ? `<p>${esc(rec.summary)}</p>` : '<p class="small muted">Getting recommendation…</p>'}
@@ -211,8 +225,14 @@
     const list = [...incidents.values()].sort((a, b) =>
       (a.status === 'resolved') - (b.status === 'resolved') || b.createdAt - a.createdAt);
     empty.hidden = list.length > 0;
+    // Keep existing audio players (and anything playing) across re-renders: live updates arrive often.
+    const players = new Map([...document.querySelectorAll('#incidents audio[data-clip]')].map(a => [a.dataset.clip, a]));
     document.querySelectorAll('#incidents article').forEach(n => n.remove());
     incidentsEl.insertAdjacentHTML('beforeend', list.map(incidentCard).join(''));
+    document.querySelectorAll('#incidents audio[data-clip]').forEach(a => {
+      const old = players.get(a.dataset.clip);
+      if (old) a.replaceWith(old);
+    });
 
     roster.innerHTML = volunteers.map(v => `
       <div class="candidate">
