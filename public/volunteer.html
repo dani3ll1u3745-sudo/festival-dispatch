@@ -246,10 +246,33 @@
     micBtn.onclick = () => (session ? stopVoice() : startVoice());
   }
 
+  // iOS: FD.unlockAudio sets the audio session to 'playback' so alerts sound in silent mode, but that
+  // session can't use the microphone. Switch to 'play-and-record' while listening, then back.
+  const setAudioSession = type => {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {}
+    dlog(`audioSession: ${navigator.audioSession ? navigator.audioSession.type : 'n/a'}`);
+  };
+
+  // On-screen event log for debugging on a phone without dev tools: open the page with ?debug=1.
+  const debugLog = new URLSearchParams(location.search).has('debug') ? document.createElement('pre') : null;
+  if (debugLog) {
+    debugLog.style.cssText = 'white-space:pre-wrap;font-size:12px;text-align:left;background:#fff;border:1px solid var(--rule);padding:.5rem;max-height:40vh;overflow:auto;margin-top:1rem;width:100%';
+    document.querySelector('.stage').append(debugLog);
+  }
+  function dlog(msg) {
+    if (!debugLog) return;
+    debugLog.textContent += `${new Date().toLocaleTimeString()} ${msg}\n`;
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+  dlog(`iOS: ${isIOS}, SpeechRecognition: ${!!SpeechRecognition}, recording: ${canRecord}`);
+
   async function startVoice() {
     voiceError.hidden = true;
     if (lastSession) lastSession.acceptResults = false;
     const s = session = lastSession = { startedAt: Date.now(), acceptResults: true };
+    s.recEnded = new Promise(r => { s.markRecEnded = r; });
+    if (!SpeechRecognition) s.markRecEnded();
+    setAudioSession('play-and-record');
     setListening(true, s);
     if (canRecord) {
       try {
@@ -292,6 +315,7 @@
     rec.onresult = e => {
       if (!s.acceptResults) return; // a stopped or sent session can't refill the box
       const spoken = [...e.results].map(r => r[0].transcript).join('').trim();
+      if (!spoken) return; // browsers can finish with an empty result: never wipe what was already heard
       note.value = [base, spoken].filter(Boolean).join(' ');
     };
     const failed = code => {
@@ -304,9 +328,18 @@
         showVoiceError(code);
       }
     };
-    rec.onerror = e => failed(e.error);
-    rec.onend = () => { if (session === s && !s.recorder) stopVoice(); }; // transcription-only sessions end with it
-    try { rec.start(); } catch (err) { failed(err?.name || 'start-failed'); }
+    rec.onerror = e => { dlog(`error: ${e.error}`); failed(e.error); };
+    rec.onend = () => {
+      dlog('end');
+      s.markRecEnded();
+      if (session === s && !s.recorder) stopVoice(); // transcription-only sessions end with it
+    };
+    if (debugLog) {
+      for (const ev of ['start', 'audiostart', 'soundstart', 'speechstart', 'speechend', 'nomatch']) rec.addEventListener(ev, () => dlog(ev));
+      rec.addEventListener('result', e => dlog(`result: ${e.results.length} part(s), "${[...e.results].map(r => r[0].transcript).join('').slice(-40)}"`));
+    }
+    try { rec.start(); dlog('start() called'); }
+    catch (err) { dlog(`start() threw: ${err?.name}`); s.markRecEnded(); failed(err?.name || 'start-failed'); }
   }
 
   // Stops recording and transcription. Resolves once the clip (if any) is ready.
@@ -321,8 +354,17 @@
     setListening(false);
     if (abortTranscript) s.acceptResults = false;
     if (s.recognition) { try { abortTranscript ? s.recognition.abort() : s.recognition.stop(); } catch {} }
-    if (!s.recorder || s.recorder.state === 'inactive') { s.stream?.getTracks().forEach(t => t.stop()); return Promise.resolve(); }
-    return new Promise(resolve => { s.recorder.addEventListener('stop', resolve, { once: true }); s.recorder.stop(); });
+    let recorderDone;
+    if (!s.recorder || s.recorder.state === 'inactive') {
+      s.stream?.getTracks().forEach(t => t.stop());
+      recorderDone = Promise.resolve();
+    } else {
+      recorderDone = new Promise(resolve => { s.recorder.addEventListener('stop', resolve, { once: true }); s.recorder.stop(); });
+    }
+    // Hand the audio session back to alerts once the mic is fully released (late transcript included).
+    const recEnded = Promise.race([s.recEnded, new Promise(r => setTimeout(r, 3000))]);
+    Promise.all([recEnded, recorderDone]).then(() => { if (!session) setAudioSession('playback'); });
+    return recorderDone;
   }
 
   // ---- Pending voice clip ----
