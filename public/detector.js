@@ -1,4 +1,5 @@
-// detector.js: fire and smoke detection on the live camera feed.
+// detector.js: fire and smoke detection on the live camera feed (the webcam, or a video file camera.html
+// plays as if it were the camera; both arrive in #cam and are analysed the same way, in real time).
 // Model and decoder come from webcam-fire-detector (see fire/MODEL.md). Everything runs on this laptop:
 // frames go to a Web Worker running the ONNX model, never to the server. Only a confirmed fire calls
 // window.reportIncident, which sends a single frame to the coordinator.
@@ -6,25 +7,25 @@
 // Contract with camera.html:
 //   reads  #cam (live <video>), #overlay (boxes), #evidence (strip canvas), #threshold (range, percent)
 //   calls  window.reportIncident(event), window.reportCameraStatus(type, visible, confidence)
-//   emits  'detector:update' on window, detail { phase, fire, smoke, ms, fps, error }
-//          phase: loading | model-error | watching | checking | smoke | fire
+//   emits  'detector:update' on window, detail { phase, fire, smoke, ms, fps, backend, error }
+//          phase: loading | model-error | watching | checking | smoke | fire; backend: webgpu | wasm
 //   sets   window.detector.reset() to forget the current sighting (e.g. when the camera moves zone)
-import { SIZE, WINDOW, letterbox, rgbTensor, trackEvidence } from './fire/detection.mjs';
+import { WINDOW, letterbox, rgbTensor, trackEvidence } from './fire/detection.mjs';
 
 const ALERT_TYPE = 'fire'; // smoke is shown but never alerts: haze machines run at every festival stage
 const CLEAR_AFTER_MS = 4000; // no fire in any frame for this long = "no longer in view"
 const STATUS_EVERY_MS = 5000; // "still in view" heartbeat to the coordinator while fire stays visible
 const FOLLOWUP_MS = 15000; // a second photo this long after the alert lets the AI judge whether it's spreading
-const MIN_INTERVAL_MS = 120; // at most ~8 analysed frames a second
+const MIN_INTERVAL_MS = 80; // at most ~12 analysed frames a second (the CPU fallback is slower than this)
 const STALL_MS = 10000; // no result for this long: restart the model
 
 const $ = id => document.getElementById(id);
 const video = $('cam'), overlay = $('overlay'), strip = $('evidence'), thresholdInput = $('threshold');
 const octx = overlay.getContext('2d');
 const input = document.createElement('canvas');
-input.width = input.height = SIZE;
 const inputCtx = input.getContext('2d', { willReadFrequently: true });
 
+let size = 0; // the model's square input, from the worker
 let worker, ready = false, frameId = 0, current = 0, lastVideoTime = -1, lastResultAt = 0;
 let evidence = { frames: [] }, boxes = [];
 // The current fire, once confirmed: { visible, lastSeenAt, lastStatusAt, incidentId, alertedAt, followupSent }.
@@ -46,8 +47,9 @@ function startWorker() {
   worker.onmessage = ({ data }) => {
     if (data.type === 'ready') {
       ready = true;
+      size = input.width = input.height = data.size;
       lastResultAt = performance.now();
-      publish({ phase: 'watching', error: null });
+      publish({ phase: 'watching', backend: data.backend, error: null });
       capture();
     } else if (data.type === 'result') onResult(data);
     else if (data.type === 'error') fail(data.message);
@@ -65,21 +67,22 @@ function fail(message) {
 // One frame in flight at a time keeps latency and memory bounded.
 function capture() {
   if (!ready) return;
-  if (video.readyState < 2 || video.currentTime === lastVideoTime) {
-    if (video.readyState < 2) lastResultAt = performance.now(); // no camera yet is not a stall
+  const idle = video.readyState < 2 || video.paused; // no camera yet, or footage paused or loading
+  if (idle || video.currentTime === lastVideoTime) {
+    if (idle) lastResultAt = performance.now(); // nothing to analyse is not a stall
     setTimeout(capture, 50);
     return;
   }
   lastVideoTime = video.currentTime;
-  const transform = letterbox(video.videoWidth, video.videoHeight);
+  const transform = letterbox(video.videoWidth, video.videoHeight, size);
   if (overlay.width !== transform.width || overlay.height !== transform.height) {
     overlay.width = transform.width;
     overlay.height = transform.height;
   }
   inputCtx.fillStyle = 'rgb(114,114,114)';
-  inputCtx.fillRect(0, 0, SIZE, SIZE);
+  inputCtx.fillRect(0, 0, size, size);
   inputCtx.drawImage(video, transform.padX, transform.padY, transform.resizedWidth, transform.resizedHeight);
-  const pixels = rgbTensor(inputCtx.getImageData(0, 0, SIZE, SIZE).data);
+  const pixels = rgbTensor(inputCtx.getImageData(0, 0, size, size).data, size);
   current = ++frameId;
   worker.postMessage(
     { type: 'frame', pixels, transform, threshold: Number(thresholdInput.value) / 100, frame: current, minIntervalMs: MIN_INTERVAL_MS },

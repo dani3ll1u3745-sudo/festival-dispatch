@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test:flow": "node scripts/test-flow.js"
+    "test:flow": "node scripts/test-flow.js",
+    "test:detection": "node --test scripts/test-detection.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

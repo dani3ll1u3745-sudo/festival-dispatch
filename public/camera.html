@@ -73,6 +73,15 @@
     .manual-report { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .6rem; }
     .manual-report button { padding: .55rem .4rem; }
 
+    .feed.dragging { outline: 3px dashed #fff; outline-offset: -10px; }
+    .source-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+    #sourceName { word-break: break-all; }
+    .demo-clips h3 { font-size: .875rem; margin: .75rem 0 .4rem; }
+    #demoList { display: grid; gap: .4rem; }
+    #demoList button { display: grid; gap: .1rem; width: 100%; text-align: left; padding: .5rem .7rem; }
+    #demoList button span { font-size: .8rem; font-weight: 400; color: var(--muted); }
+    #demoList button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
     .threshold-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
     input[type=range] { width: 100%; accent-color: var(--accent); margin: .6rem 0 .2rem; min-height: 28px; }
     .range-ends { display: flex; justify-content: space-between; }
@@ -113,12 +122,28 @@
         </div>
         <figure class="evidence">
           <canvas id="evidence" aria-hidden="true"></canvas>
-          <figcaption id="evidenceCaption">Each mark is one checked frame from the last 3 seconds</figcaption>
+          <figcaption id="evidenceCaption">Each mark is one checked frame from the last 2.5 seconds</figcaption>
         </figure>
       </div>
     </section>
 
     <aside class="side">
+      <section class="panel">
+        <h2>Camera feed</h2>
+        <p class="small muted" id="sourceName">Live from this laptop’s webcam</p>
+        <div class="demo-clips" id="demoClips" hidden>
+          <h3>Demo clips</h3>
+          <div id="demoList"></div>
+        </div>
+        <div class="source-actions">
+          <button class="secondary" id="pickFootage">Play a video file…</button>
+          <button class="secondary" id="restartFootage" hidden>Restart clip</button>
+          <button class="secondary" id="useLive" hidden>Back to live camera</button>
+        </div>
+        <input type="file" id="footageFile" accept="video/*" hidden>
+        <p class="small muted">Footage plays through this camera as if it were live, so detection and alerts work exactly the same. You can also drop a video on the picture.</p>
+      </section>
+
       <section class="panel">
         <h2>Alerts from this camera</h2>
         <div id="alerts"></div>
@@ -135,8 +160,8 @@
       </section>
 
       <section class="panel">
-        <label class="threshold-head" for="threshold">Confidence needed <output id="thresholdValue" class="num">50%</output></label>
-        <input type="range" id="threshold" min="25" max="85" step="5" value="50">
+        <label class="threshold-head" for="threshold">Confidence needed <output id="thresholdValue" class="num">30%</output></label>
+        <input type="range" id="threshold" min="15" max="70" step="5" value="30">
         <div class="range-ends small muted"><span>Catches more</span><span>Fewer false alarms</span></div>
         <p class="small muted num" id="perf">Model loading</p>
       </section>
@@ -166,6 +191,9 @@
   let zoneId = null;
   let incidents = new Map();
   let camera = { state: 'starting', error: null }; // starting | live | error
+  let source = { kind: 'live', name: null }; // live webcam, or a video file played as if it were the camera
+  let footageUrl = null;
+  let sourceToken = 0; // bumped on every switch, so a slow camera or file that finishes late is ignored
   let detection = { phase: 'loading' };
 
   // ---------- Server ----------
@@ -184,7 +212,26 @@
   });
 
   // ---------- Camera ----------
+  const fitFeed = () => { feed.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`; }; // keeps boxes aligned with the picture
+
+  function stopSource() {
+    video.srcObject?.getTracks().forEach(t => { t.onended = null; t.stop(); });
+    video.srcObject = null;
+    if (video.getAttribute('src')) {
+      video.removeAttribute('src');
+      video.load();
+    }
+    if (footageUrl) {
+      URL.revokeObjectURL(footageUrl);
+      footageUrl = null;
+    }
+  }
+
   async function startCamera() {
+    if (source.kind !== 'live') window.detector?.reset(); // the footage's sighting is not the webcam's
+    stopSource();
+    const token = ++sourceToken;
+    source = { kind: 'live', name: null };
     camera = { state: 'starting', error: null };
     render();
     try {
@@ -194,9 +241,10 @@
         camera = { state: 'error', error: 'The camera disconnected. Plug it back in or close other apps using it, then try again.' };
         render();
       };
+      if (token !== sourceToken) { stream.getTracks().forEach(t => t.stop()); return; } // switched source meanwhile
       video.srcObject = stream;
       await video.play();
-      feed.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`; // keeps boxes aligned with the picture
+      fitFeed();
       camera = { state: 'live', error: null };
     } catch (err) {
       const messages = {
@@ -205,10 +253,101 @@
         NotReadableError: 'Another app is using the camera. Close it (or the Firewatch page), then try again.',
         InsecureContext: 'Cameras only work on localhost or HTTPS. Open this page through your ngrok link.',
       };
+      if (token !== sourceToken) return;
       camera = { state: 'error', error: messages[err.name] || `The camera could not start (${err.name}).` };
     }
     render();
   }
+
+  // Simulation: a video file plays in the camera's <video>, so detector.js analyses it exactly like
+  // the webcam (in real time, dropping frames it can't keep up with) and alerts automatically.
+  // It loops, because a CCTV feed never ends. A picked file stays on this laptop; demo clips come
+  // from public/footage.
+  async function playFootage({ name, url, file }) {
+    window.detector?.reset(); // tells the coordinator the old view is clear
+    stopSource();
+    const token = ++sourceToken;
+    source = { kind: 'footage', name, url };
+    if (file && !file.type.startsWith('video/')) {
+      camera = { state: 'error', error: `${name} isn’t a video. Choose an MP4 or WebM file.` };
+      render();
+      return;
+    }
+    camera = { state: 'starting', error: null };
+    render();
+    try {
+      if (file) url = footageUrl = URL.createObjectURL(file);
+      video.loop = true;
+      video.src = url;
+      await new Promise((resolve, reject) => {
+        video.addEventListener('loadeddata', resolve, { once: true });
+        video.addEventListener('error', reject, { once: true });
+      });
+      if (token !== sourceToken) return; // switched source meanwhile
+      // In a hidden tab Chrome holds video-only media until the tab is shown again (see visibilitychange).
+      video.play().catch(() => {});
+      fitFeed();
+      camera = { state: 'live', error: null };
+    } catch (err) {
+      if (token !== sourceToken) return;
+      camera = { state: 'error', error: `This browser can’t play ${name}. Try an MP4 (H.264) or WebM file.` };
+    }
+    render();
+  }
+  const playFile = file => file && playFootage({ name: file.name, file });
+
+  // Preloaded clips, so a demo doesn't need the file picker. Any video in public/footage is listed
+  // (titles from clips.json); before the server has /api/footage, clips.json alone is used.
+  async function loadDemoClips() {
+    let clips;
+    try {
+      const r = await fetch('/api/footage');
+      if (!r.ok) throw new Error();
+      clips = await r.json();
+    } catch {
+      const titles = await fetch('footage/clips.json').then(r => r.json()).catch(() => ({}));
+      clips = Object.entries(titles).map(([file, t]) => ({ file, url: `footage/${encodeURIComponent(file)}`, ...t }));
+    }
+    demoList.innerHTML = clips.map(c => `
+      <button class="secondary" data-clip="${esc(c.url)}" data-title="${esc(c.title)}" aria-pressed="false">
+        ${esc(c.title)}${c.note ? `<span>${esc(c.note)}</span>` : ''}
+      </button>`).join('');
+    demoClips.hidden = !clips.length;
+    render();
+  }
+  demoList.addEventListener('click', e => {
+    const b = e.target.closest('[data-clip]');
+    if (b) playFootage({ name: b.dataset.title, url: b.dataset.clip });
+  });
+
+  function replayFootage() {
+    window.detector?.reset();
+    video.currentTime = 0;
+    video.play().catch(() => {});
+  }
+
+  // Chrome pauses video-only media while the page is hidden (a background tab, or a window fully covered
+  // by another), so footage is only analysed while this page is visible. Resume it on return.
+  document.addEventListener('visibilitychange', () => {
+    if (source.kind === 'footage' && camera.state === 'live' && video.paused) video.play().catch(() => {});
+  });
+  video.addEventListener('error', () => {
+    if (source.kind !== 'footage' || !video.getAttribute('src')) return;
+    camera = { state: 'error', error: `This browser can’t play ${source.name}. Try an MP4 (H.264) or WebM file.` };
+    render();
+  });
+
+  pickFootage.addEventListener('click', () => footageFile.click());
+  footageFile.addEventListener('change', () => { playFile(footageFile.files[0]); footageFile.value = ''; });
+  restartFootage.addEventListener('click', replayFootage);
+  useLive.addEventListener('click', startCamera);
+  feed.addEventListener('dragover', e => { e.preventDefault(); feed.classList.add('dragging'); });
+  feed.addEventListener('dragleave', () => feed.classList.remove('dragging'));
+  feed.addEventListener('drop', e => {
+    e.preventDefault();
+    feed.classList.remove('dragging');
+    playFile(e.dataTransfer.files[0]);
+  });
 
   // Current frame (with detection boxes) as a small JPEG data URL.
   window.getCameraFrame = function (maxWidth = 480, quality = 0.6) {
@@ -231,7 +370,7 @@
     const now = Date.now();
     if (lastSent[event.type] && now - lastSent[event.type] < 1000) return Promise.resolve(null);
     lastSent[event.type] = now;
-    const payload = { source: 'camera', zoneId, timestamp: now, snapshot: getCameraFrame(), ...event };
+    const payload = { source: 'camera', zoneId, timestamp: now, snapshot: getCameraFrame(), simulated: source.kind === 'footage', ...event };
     return new Promise(resolve => socket.emit('incident:report', payload, resolve));
   };
   // withFrame sends the current frame too, so the AI can compare it with the alert photo.
@@ -292,8 +431,13 @@
 
   // One headline for the whole page: camera problems first, then what the model sees.
   function currentStatus() {
-    if (camera.state === 'error') return { phase: 'error', title: 'Camera is off', copy: camera.error, action: ['retry', 'Try again'] };
-    if (camera.state === 'starting') return { phase: 'loading', title: 'Starting camera', copy: 'Allow camera access if your browser asks.' };
+    const footage = source.kind === 'footage';
+    if (camera.state === 'error') return footage
+      ? { phase: 'error', title: 'Footage won’t play', copy: camera.error, action: ['live', 'Back to live camera'] }
+      : { phase: 'error', title: 'Camera is off', copy: camera.error, action: ['retry', 'Try again'] };
+    if (camera.state === 'starting') return footage
+      ? { phase: 'loading', title: 'Loading footage', copy: source.name }
+      : { phase: 'loading', title: 'Starting camera', copy: 'Allow camera access if your browser asks.' };
     const p = detection.phase;
     if (p === 'loading') return { phase: 'loading', title: 'Getting ready', copy: 'Loading the fire model. Video stays on this laptop; only a confirmed alert sends one photo.' };
     if (p === 'model-error') return { phase: 'error', title: 'Detection paused', copy: `${detection.error} Retrying in a few seconds. Use the manual buttons meanwhile.` };
@@ -312,11 +456,11 @@
 
   function captionText() {
     const f = detection.fire;
-    if (camera.state !== 'live' || !f) return 'Each mark is one checked frame from the last 3 seconds';
-    if (detection.phase === 'checking') return `Fire in ${f.hits} of ${f.total} frames. Alerts at ${f.needed}.`;
+    if (camera.state !== 'live' || !f) return 'Each mark is one checked frame from the last 2.5 seconds';
+    if (detection.phase === 'checking') return `Fire in ${f.hits} of ${f.total} frames over ${(f.span / 1000).toFixed(1)} s. Alerts once it lasts 0.8 s.`;
     if (detection.phase === 'fire') return `Fire in ${f.hits} of ${f.total} recent frames`;
     if (detection.phase === 'smoke') return `Smoke in ${detection.smoke.hits} of ${detection.smoke.total} frames`;
-    return 'Each mark is one checked frame from the last 3 seconds';
+    return 'Each mark is one checked frame from the last 2.5 seconds';
   }
 
   // Only touch the DOM when text changes, so screen readers announce real changes, not every frame.
@@ -335,10 +479,15 @@
     }
     setText(evidenceCaption, captionText());
     feedMessage.hidden = camera.state === 'live';
-    setText(feedMessage, camera.state === 'error' ? 'No picture' : 'Starting camera…');
+    setText(feedMessage, camera.state === 'error' ? 'No picture' : source.kind === 'footage' ? 'Loading footage…' : 'Starting camera…');
+    const footage = source.kind === 'footage';
+    setText(sourceName, footage ? `Simulating with ${source.name}` : 'Live from this laptop’s webcam');
+    restartFootage.hidden = !footage || camera.state !== 'live';
+    useLive.hidden = !footage;
+    demoList.querySelectorAll('[data-clip]').forEach(b => b.setAttribute('aria-pressed', String(footage && b.dataset.clip === source.url)));
     clock.classList.toggle('off', camera.state !== 'live');
     setText(perf, detection.ms != null
-      ? `Checking ${detection.fps.toFixed(1)} frames a second on this laptop (${Math.round(detection.ms)} ms each)`
+      ? `Checking ${detection.fps.toFixed(1)} frames a second on this laptop’s ${detection.backend === 'webgpu' ? 'graphics chip' : 'processor'} (${Math.round(detection.ms)} ms each)`
       : detection.phase === 'model-error' ? 'Model not running' : detection.phase === 'loading' ? 'Model loading' : 'Model ready. Waiting for the camera.');
 
     const list = zoneIncidents().slice(0, 6);
@@ -356,7 +505,7 @@
 
   document.addEventListener('click', e => {
     const a = e.target.closest('[data-action]');
-    if (a?.dataset.action === 'retry') startCamera();
+    if (a?.dataset.action === 'retry' || a?.dataset.action === 'live') startCamera();
   });
 
   setInterval(() => { clock.textContent = clockTime(Date.now()); }, 1000);
@@ -378,6 +527,7 @@
       qrUrl.textContent += ' (phones can’t open localhost: set PUBLIC_URL in .env to your ngrok link)';
     }
     startCamera();
+    loadDemoClips();
   });
 </script>
 <!-- Detection runs as a module: it loads the model in a worker and calls reportIncident above. -->

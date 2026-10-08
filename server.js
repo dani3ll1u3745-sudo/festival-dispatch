@@ -809,6 +809,7 @@ function handleReport(raw = {}) {
   const now = Date.now();
   const confidence = typeof raw.confidence === 'number' ? raw.confidence : source === 'volunteer' ? 1 : null;
   const automatic = source === 'camera' && !raw.manual;
+  const simulated = source === 'camera' && raw.simulated === true; // the camera was playing a video file, not live
 
   // Volunteers' words live in incident.reports; note is only for camera notes such as "Manual trigger".
   const note = source === 'camera' && typeof raw.note === 'string' ? raw.note.trim().slice(0, 1000) : null;
@@ -839,6 +840,7 @@ function handleReport(raw = {}) {
     }
     if (!existing.snapshot && raw.snapshot) { existing.snapshot = raw.snapshot; newSnapshot = true; }
     if (note && !existing.note) existing.note = note;
+    if (simulated) existing.simulated = true;
     const report = fileReport(existing);
     if (camera) existing.camera = existing.camera?.visible ? { ...existing.camera, lastSeenAt: now } : camera;
     emitUpdate(existing, newSnapshot);
@@ -857,6 +859,7 @@ function handleReport(raw = {}) {
     confidence,
     snapshot: raw.snapshot || null,
     note: note || null,
+    simulated,
     requires: [...config.incidentTypes[type].requires], // copied so AI classification can change them per incident
     priority: config.incidentTypes[type].priority,
     reclassifiedFrom: null,
@@ -927,6 +930,22 @@ app.get('/api/audio/:id', (req, res) => {
   }
   res.status(206).set('Content-Range', `bytes ${start}-${end}/${size}`);
   res.send(clip.buffer.subarray(start, end + 1));
+});
+
+// Demo clips for the camera page: every video in public/footage, titled from clips.json when it has one.
+app.get('/api/footage', (req, res) => {
+  const fs = require('fs');
+  const dir = path.join(__dirname, 'public', 'footage');
+  let titles = {};
+  try { titles = JSON.parse(fs.readFileSync(path.join(dir, 'clips.json'), 'utf8')); } catch {}
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /\.(mp4|webm|m4v|mov)$/i.test(f)).sort(); } catch {}
+  res.json(files.map(file => ({
+    file,
+    url: `footage/${encodeURIComponent(file)}`,
+    title: titles[file]?.title || file.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+    note: titles[file]?.note || null,
+  })));
 });
 
 app.get('/api/config', (req, res) => {

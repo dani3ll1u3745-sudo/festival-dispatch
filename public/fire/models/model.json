@@ -1,0 +1,5 @@
+{
+  "file": "fire-smoke-fasdd-416.onnx",
+  "size": 416,
+  "labels": ["fire", "smoke"]
+}

@@ -301,7 +301,7 @@
     const linkedTo = i.linkedTo && incidents.get(i.linkedTo);
     const linked = (i.linked || []).map(id => incidents.get(id)).filter(Boolean);
     const sourceLine = [
-      `${i.sources.map(s => SOURCE[s] || s).join(' and ')}${conf}`,
+      `${i.sources.map(s => s === 'camera' && i.simulated ? 'Camera (simulated footage)' : SOURCE[s] || s).join(' and ')}${conf}`,
       i.reportCount > 1 && `${i.reportCount} reports`,
       linkedTo && `from ${linkedTo.typeLabel.toLowerCase()} at ${linkedTo.zoneName}`,
       linked.length && `opened ${linked.map(l => l.typeLabel.toLowerCase()).join(' and ')} incident`,
