@@ -89,6 +89,7 @@
     details.panel summary { cursor: pointer; font-weight: 600; min-height: 28px; display: flex; align-items: center; }
     #qr { background: #fff; padding: .6rem; border-radius: 8px; width: max-content; margin: .75rem 0 .4rem; border: 1px solid var(--border); }
     #qrUrl { word-break: break-all; }
+    .qr-warning { color: var(--fire); font-weight: 600; }
 
     @media (prefers-reduced-motion: reduce) { .monitor { transition: none; } .monitor.alarm { animation: none; } }
   </style>
@@ -170,6 +171,7 @@
         <summary>Volunteer sign-up QR code</summary>
         <div id="qr"></div>
         <p class="small muted" id="qrUrl"></p>
+        <p class="small qr-warning" id="qrWarning" role="status" hidden></p>
       </details>
     </aside>
   </main>
@@ -511,6 +513,20 @@
   setInterval(() => { clock.textContent = clockTime(Date.now()); }, 1000);
   clock.textContent = clockTime(Date.now());
 
+  // The QR code is only useful if its link reaches this server. A stopped ngrok tunnel is the usual
+  // reason volunteers can't join, so say so here. Rechecked every 30 s: the tunnel can drop mid-event.
+  async function checkPublicUrl() {
+    const s = await fetch('/api/public-url-status').then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!s) return; // an older server without the check: say nothing
+    qrWarning.hidden = s.reachable;
+    if (!s.reachable) {
+      qrWarning.textContent = s.error === 'ERR_NGROK_3200'
+        ? 'This link is offline, so phones can’t join. Start ngrok for this address, then wait a moment.'
+        : `Phones can’t reach this link (${s.error}). Check that ngrok is running and forwarding to this server.`;
+    }
+    setTimeout(checkPublicUrl, 30000);
+  }
+
   // ---------- Start ----------
   fetch('/api/config').then(r => r.json()).then(c => {
     config = c;
@@ -526,6 +542,7 @@
     if (!c.publicUrl && location.hostname === 'localhost') {
       qrUrl.textContent += ' (phones can’t open localhost: set PUBLIC_URL in .env to your ngrok link)';
     }
+    if (c.publicUrl) checkPublicUrl();
     startCamera();
     loadDemoClips();
   });

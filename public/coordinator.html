@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="coord">
-<div class="banner" id="banner"></div>
+<div class="banner" id="banner" role="status"></div>
 
 <div class="overlay" id="start">
   <div class="panel" style="max-width: 420px; width: 100%;">
@@ -20,31 +20,55 @@
   </div>
 </div>
 
-<div class="overlay" id="snapshotModal" role="dialog" aria-modal="true" aria-label="Camera photos" hidden>
+<div class="overlay" id="snapshotModal" role="dialog" aria-modal="true" aria-label="Photos" hidden>
   <div class="panel" style="max-width: 900px; width: 100%;">
     <div id="snapshotPhotos"></div>
     <button class="secondary full" id="snapshotClose" style="margin-top: .75rem;">Close</button>
   </div>
 </div>
 
-<div class="page">
-  <div class="topbar">
-    <div>
+<header class="coord-bar">
+  <div class="coord-bar-inner">
+    <div class="brand">
       <h1>MaydAI</h1>
-      <p class="muted small" id="festival"></p>
+      <p class="small" id="festival"></p>
     </div>
-    <span class="small"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
+    <div class="tabs" role="tablist" aria-label="Views">
+      <button role="tab" id="tabLive" aria-selected="true" aria-controls="viewLive">Live <span class="count" id="liveCount"></span></button>
+      <button role="tab" id="tabNotes" aria-selected="false" aria-controls="viewNotes" tabindex="-1">Case notes <span class="count" id="notesCount"></span></button>
+    </div>
+    <span class="small conn"><span id="dot" class="status-dot"></span><span id="conn">Connecting</span></span>
   </div>
+</header>
 
-  <section id="incidents" aria-live="polite">
-    <div class="panel muted" id="empty">No incidents. Alerts from cameras and volunteers appear here, each with a plan you can run.</div>
+<main class="coord-page">
+  <section id="viewLive" role="tabpanel" aria-labelledby="tabLive">
+    <p class="overview" id="overview"></p>
+    <div class="board">
+      <div id="incidents" aria-live="polite">
+        <div class="empty-state" id="empty">
+          <h2>All clear</h2>
+          <p>Alerts from cameras and volunteers appear here, each with a plan you can run in one tap.</p>
+        </div>
+      </div>
+      <aside class="rail" aria-label="Team and conditions">
+        <section class="rail-block">
+          <h2>Team</h2>
+          <div id="roster" class="small muted">Loading…</div>
+        </section>
+        <section class="rail-block">
+          <h2>Conditions</h2>
+          <p class="small" id="conditions"></p>
+        </section>
+      </aside>
+    </div>
   </section>
 
-  <div class="panel">
-    <h2>Volunteers</h2>
-    <div id="roster" class="small muted">Loading…</div>
-  </div>
-</div>
+  <section id="viewNotes" role="tabpanel" aria-labelledby="tabNotes" hidden>
+    <p class="overview">A short note on every closed case, written when it closes, for the debrief after the event.</p>
+    <div id="notes"></div>
+  </section>
+</main>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
@@ -54,6 +78,7 @@
   let incidents = new Map();
   let volunteers = [];
   let config = null;
+  let view = 'live';
 
   startBtn.onclick = () => { FD.unlockAudio(); start.hidden = true; };
 
@@ -73,8 +98,23 @@
     render();
   });
   // Updates leave out the photos unless one changed, so keep the ones we already have.
-  socket.on('incident:updated', i => { incidents.set(i.id, { ...incidents.get(i.id), ...i }); render(); });
+  socket.on('incident:updated', i => {
+    const before = incidents.get(i.id);
+    incidents.set(i.id, { ...before, ...i });
+    if (i.status === 'resolved' && before && before.status !== 'resolved') {
+      showBanner(`${i.typeLabel} at ${i.zoneName} closed. Its case note is in Case notes.`, 'media');
+    }
+    render();
+  });
   socket.on('volunteers:updated', v => { volunteers = v; render(); });
+  // A volunteer replying from a job. Needing help is urgent, so it sounds like a new alert.
+  socket.on('volunteer:update', u => {
+    FD.beep(u.update === 'need_help' ? 3 : 1);
+    showBanner(u.update === 'need_help' ? `${u.volunteerName} needs more help at ${u.zoneName}`
+      : u.update === 'sorted' ? `${u.volunteerName} says the ${u.typeLabel.toLowerCase()} at ${u.zoneName} is sorted`
+      : `${u.volunteerName} sent an update from ${u.zoneName}`,
+      u.update === 'need_help' ? 'fire' : u.update === 'sorted' ? 'medical' : 'media');
+  });
   socket.on('media:new', m => {
     FD.beep(1);
     showBanner(`${m.volunteerName} added a ${m.kind === 'video' ? 'video' : 'photo'}`, 'media');
@@ -82,37 +122,58 @@
 
   function showBanner(text, type) {
     banner.textContent = text;
-    banner.style.background = type === 'media' ? 'var(--accent)'
+    banner.style.background = type === 'media' ? 'var(--ink)'
       : `var(--${type === 'overcrowding' ? 'crowd' : type}-strong)`; // darker shade keeps white text AA
     banner.classList.add('show');
     clearTimeout(showBanner.t);
     showBanner.t = setTimeout(() => banner.classList.remove('show'), 4000);
   }
 
+  // ---------- Tabs ----------
+  function setView(v, focus) {
+    view = v;
+    const live = v === 'live';
+    tabLive.setAttribute('aria-selected', live); tabNotes.setAttribute('aria-selected', !live);
+    tabLive.tabIndex = live ? 0 : -1; tabNotes.tabIndex = live ? -1 : 0;
+    viewLive.hidden = !live; viewNotes.hidden = live;
+    if (focus) (live ? tabLive : tabNotes).focus();
+    render();
+  }
+  tabLive.onclick = () => setView('live');
+  tabNotes.onclick = () => setView('notes');
+  document.querySelector('.tabs').addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') setView(view === 'live' ? 'notes' : 'live', true);
+  });
+
   // ---------- Helpers ----------
-  const duration = ts => {
-    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-    return s < 60 ? `${s}s` : `${Math.round(s / 60)} min`;
-  };
   const clock = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const duration = ms => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+    const m = Math.round(s / 60);
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  };
+  const since = ts => duration(Date.now() - ts);
   const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
-  const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No qualifications';
+  const qualNames = qs => qs.map(q => config.qualifications[q] || q).join(', ') || 'No training listed';
   const typeLabel = t => config.incidentTypes[t]?.label || t;
   const zoneName = id => config.zones[id]?.name || id;
+  const names = list => list.length < 3 ? list.join(' and ') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`;
   const assignmentLabel = { sent: 'notified', accepted: 'on the way', arrived: 'arrived' };
+  const PRIORITY = { 1: 'Urgent', 2: 'Needs a prompt response', 3: 'Can wait a few minutes' };
   const SOURCE = { camera: 'Camera', volunteer: 'Volunteer report', coordinator: 'Opened from a plan' };
   const PHONE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   const TICK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 
   // ---------- UI state kept across re-renders ----------
   // Live updates rebuild the cards, so anything the coordinator has changed lives here, not in the DOM.
-  const expandedResolved = new Set();
-  const openMore = new Set();
+  const openDetails = new Set(); // data-keep keys of <details> the coordinator opened
   const openEditors = new Set(); // `${planKey}:${actionId}`
   const running = new Set(); // incident ids with a run in flight
   const chosen = new Map(); // planKey -> option id the coordinator switched to
   const edits = new Map(); // planKey -> Map(actionId -> { selected, volunteerId, briefing, text, zoneId, type, note })
   const planKey = i => `${i.id}@${i.recommendation?.at}`;
+  const keep = key => `data-keep="${esc(key)}" ${openDetails.has(key) ? 'open' : ''}`;
   function stepState(i, a) {
     const key = planKey(i);
     if (!edits.has(key)) edits.set(key, new Map());
@@ -125,41 +186,93 @@
   const allSteps = i => (i.recommendation?.options || []).flatMap(o => o.plan);
   const findStep = (i, id) => allSteps(i).find(a => a.id === id);
 
-  // ---------- Situation: photo, AI verdict, insight ----------
+  // ---------- The read: photo, AI verdict, insight, the words that raised it ----------
   const PEOPLE = { none: 'No one in view', few: 'A few people nearby', many: 'Crowd nearby' };
   const INJURIES = { possible: 'Possible injuries', visible: 'Injured people visible' };
   const TREND = { growing: 'Growing since the alert', about_the_same: 'Same size as at the alert', smaller: 'Smaller than at the alert', out: 'Looks out now' };
 
   function cameraLine(i) {
     if (!i.camera) return '';
-    const text = i.camera.visible ? 'Still in view'
-      : Date.now() - i.camera.changedAt < 10000 ? 'Just cleared' : `Clear for ${duration(i.camera.changedAt)}`;
+    const text = i.camera.visible ? 'Camera still sees it'
+      : Date.now() - i.camera.changedAt < 10000 ? 'Just cleared' : `Clear for ${since(i.camera.changedAt)}`;
     return `<span class="live ${i.camera.visible ? 'visible' : 'clear'}">${text}</span>`;
   }
 
-  function situation(i) {
+  // What volunteers typed and said, and their clip.
+  function reportBody(i, r) {
+    const c = (i.audioClips || []).find(x => x.id === r.clipId);
+    const said = r.transcriptStatus === 'done' ? `<p class="quote">“${esc(r.transcript)}”</p>`
+      : r.transcriptStatus === 'pending' ? '<p class="small muted">Transcribing the voice clip…</p>'
+      : r.transcriptStatus === 'unavailable' ? `<p class="small muted">No transcript${c ? ', listen to the clip' : ''}</p>` : '';
+    return `
+      ${r.typedNote ? `<p class="quote">“${esc(r.typedNote)}”</p>` : ''}
+      ${said}
+      ${c ? `<div class="clip-line"><audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio></div>` : ''}`;
+  }
+
+  function read(i) {
     const rec = i.recommendation;
     const sc = rec?.scene;
     const photo = i.snapshot ? `
       <button class="photo" data-snapshot="${i.id}" aria-label="Enlarge camera photo">
         <img src="${i.followupSnapshot || i.snapshot}" alt="Camera photo of the incident">
-        ${i.status !== 'resolved' ? cameraLine(i) : ''}
+        ${cameraLine(i)}
         ${sc ? `<span class="verdict ${esc(sc.confirms)}">AI: ${esc(cap(sc.looksLike))}</span>`
           : `<span class="verdict pending">AI is checking the photo…</span>`}
-      </button>` : (i.status !== 'resolved' && i.camera ? `<p class="small">${cameraLine(i)}</p>` : '');
-
+      </button>` : '';
     const facts = sc ? [
-      sc.trend && [TREND[sc.trend], ['growing'].includes(sc.trend) ? 'alarm' : ['smaller', 'out'].includes(sc.trend) ? 'calm' : ''],
+      sc.trend && [TREND[sc.trend], sc.trend === 'growing' ? 'alarm' : ['smaller', 'out'].includes(sc.trend) ? 'calm' : ''],
       INJURIES[sc.injuries] && [INJURIES[sc.injuries], 'alarm'],
       PEOPLE[sc.peopleNearby] && [PEOPLE[sc.peopleNearby], sc.peopleNearby === 'many' ? 'alarm' : ''],
     ].filter(Boolean) : [];
-
+    const first = [...(i.reports || [])].sort((a, b) => a.ts - b.ts)[0];
+    const raisedBy = i.sources[0] === 'volunteer' && first ? `
+      <div class="raised">
+        <p class="small"><strong>${esc(first.volunteerName)}</strong> <span class="muted">at ${clock(first.ts)}</span></p>
+        ${reportBody(i, first)}
+      </div>` : i.note && i.sources[0] === 'coordinator' ? `<p class="quote">“${esc(i.note)}”</p>` : '';
     return `
-      ${photo}
-      ${facts.length ? `<ul class="facts">${facts.map(([t, c]) => `<li class="${c}">${esc(t)}</li>`).join('')}</ul>` : ''}
-      ${rec ? `<p class="insight">${esc(rec.insight)}</p>`
-        : !i.snapshot ? '<p class="insight pending">AI is reading the report…</p>' : ''}
-      ${i.mediaObservations ? `<p class="media-obs">From photos and videos: ${esc(i.mediaObservations)}</p>` : ''}`;
+      <div class="read ${photo ? 'has-photo' : ''}">
+        ${photo}
+        <div class="read-text">
+          ${rec ? `<p class="insight">${esc(rec.insight)}</p>` : '<p class="insight pending">AI is reading the report…</p>'}
+          ${facts.length ? `<ul class="facts">${facts.map(([t, c]) => `<li class="${c}">${esc(t)}</li>`).join('')}</ul>` : ''}
+          ${!i.snapshot && i.camera ? `<p class="small">${cameraLine(i)}</p>` : ''}
+          ${raisedBy}
+          ${i.mediaObservations ? `<p class="media-obs">From photos and videos: ${esc(i.mediaObservations)}</p>` : ''}
+          ${i.reclassifiedFrom ? `<p class="small muted">Reported as ${esc(i.reclassifiedFrom.toLowerCase())}. AI: ${esc(i.classificationReason || '')}</p>`
+            : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI: ${esc(i.classificationReason)}</p>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // ---------- Response track: reported, sent, on the way, arrived, sorted ----------
+  // The volunteer's phone shows the same track, so both sides see the same progress.
+  const latestReply = i => [...(i.reports || [])].reverse().find(r => r.update);
+  function track(i) {
+    const a = i.assignments || [];
+    const stages = [
+      ['Reported', true],
+      ['Sent', a.length > 0],
+      ['On the way', a.some(x => x.status === 'accepted' || x.status === 'arrived')],
+      ['Arrived', a.some(x => x.status === 'arrived')],
+      ['Sorted', latestReply(i)?.update === 'sorted'],
+    ];
+    const next = stages.findIndex(([, done]) => !done);
+    return `<ol class="track-line" aria-label="Response progress">${stages.map(([label, done], n) =>
+      `<li class="${done ? 'done' : n === next ? 'next' : ''}">${label}${done ? '<span class="visually-hidden">, done</span>' : ''}</li>`).join('')}</ol>`;
+  }
+
+  // The newest reply from a volunteer on the job, right under the track: it's what the next decision hangs on.
+  const REPLY = { sorted: 'says it’s sorted', need_help: 'needs more help', update: 'sent an update' };
+  function reply(i) {
+    const r = latestReply(i);
+    if (!r) return '';
+    return `
+      <div class="reply ${r.update}" role="note">
+        <p><strong>${esc(r.volunteerName)}</strong> ${REPLY[r.update]} <span class="muted">at ${clock(r.ts)}</span></p>
+        ${reportBody(i, r)}
+      </div>`;
   }
 
   // ---------- The plan ----------
@@ -179,7 +292,7 @@
     const editing = !done && openEditors.has(key);
     const field = (name, attrs = '') => `data-incident="${i.id}" data-step="${a.id}" data-field="${name}" ${attrs}`;
 
-    let title, detail = '', message = '', editor = '', warn = '';
+    let title, detail = '', message = '', editor = '', warn = '', guide = '';
     if (a.kind === 'dispatch' || a.kind === 'reassign') {
       const v = volunteers.find(x => x.id === e.volunteerId);
       const name = done ? a.volunteerName : v?.name || a.volunteerName;
@@ -190,6 +303,12 @@
       message = e.briefing;
       if (!done && a.kind === 'dispatch' && v && v.status !== 'available') warn = `${v.name} is no longer free. Pick someone else.`;
       if (editing) editor = `<textarea rows="3" aria-label="Message to the volunteer" ${field('briefing')}>${esc(e.briefing)}</textarea>`;
+      if (a.steps?.length) guide = `
+        <details class="guide" ${keep(`guide:${key}`)}>
+          <summary>What ${esc(name)} is told to do</summary>
+          <ol>${a.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+          ${a.safety ? `<p class="guide-safety">${esc(a.safety)}</p>` : ''}
+        </details>`;
     } else if (a.kind === 'message_zone') {
       const count = volunteers.filter(v => v.online && v.zoneId === e.zoneId).length;
       title = done ? `Messaged volunteers at ${esc(zoneName(e.zoneId))}`
@@ -199,6 +318,9 @@
       if (editing) editor = `<textarea rows="3" aria-label="Message to the zone" ${field('text')}>${esc(e.text)}</textarea>`;
     } else if (a.kind === 'dismiss') {
       title = done ? 'Marked as a false alarm' : 'Mark it a false alarm';
+      detail = done ? '' : esc(a.why);
+    } else if (a.kind === 'resolve') {
+      title = done ? 'Marked resolved' : 'Close it as handled';
       detail = done ? '' : esc(a.why);
     } else if (a.kind === 'open_incident') {
       title = done ? `Opened a ${esc(typeLabel(e.type).toLowerCase())} incident`
@@ -220,7 +342,8 @@
           ${detail ? `<p class="step-detail">${detail}</p>` : ''}
           ${message && !editing ? `<p class="step-msg">“${esc(message)}”</p>` : ''}
           ${editor}
-          ${done || a.kind === 'dismiss' ? '' : `<button class="link-button" data-edit="${esc(key)}">${editing ? 'Done editing' : a.kind === 'open_incident' ? 'Edit note' : 'Edit message'}</button>`}
+          ${guide}
+          ${done || a.kind === 'dismiss' || a.kind === 'resolve' ? '' : `<button class="link-button" data-edit="${esc(key)}">${editing ? 'Done editing' : a.kind === 'open_incident' ? 'Edit note' : 'Edit message'}</button>`}
           ${status}
         </div>
         ${done ? '' : `<button class="secondary do" data-do="${i.id}" data-step="${a.id}" ${running.has(i.id) ? 'disabled' : ''}>Do</button>`}
@@ -263,7 +386,7 @@
     const started = opts.find(o => o.plan.some(a => a.status !== 'proposed'));
     const pick = started || opts.find(o => o.id === chosen.get(planKey(i))) || opts[0];
     const other = started ? null : opts.find(o => o !== pick);
-    const rank = o => (o === opts[0] && opts.length > 1 ? 'Recommended' : opts.length > 1 ? 'Other option' : 'Suggested');
+    const rank = o => (started ? 'Your plan' : o === opts[0] && opts.length > 1 ? 'Recommended' : opts.length > 1 ? 'Other option' : 'Suggested');
     return `
       <section class="decision">
         <div class="option">
@@ -279,7 +402,7 @@
             ${other.why ? `<span class="option-why">${esc(other.why)}</span>` : ''}
             <span class="option-switch">Switch</span>
           </button>` : ''}
-        <p class="ai-note">${i.analysing && i.analysingMedia ? 'Reanalysing with new media…'
+        <p class="ai-note">${i.analysing && i.analysingMedia ? 'Reading the new photos and videos…'
           : i.analysing ? 'New information came in. The AI is updating this advice…'
           : rec.source !== 'ai' ? 'Standard steps (AI unavailable)'
           : rec.updated ? 'Updated with the latest information. Suggested by AI, check before running.'
@@ -289,24 +412,10 @@
 
   // ---------- Incident card ----------
   function incidentCard(i) {
-    const open = i.status !== 'resolved';
-    const head = `
-      <span class="tag ${i.type}">${esc(i.typeLabel)}</span>
-      <span class="inc-zone">${esc(i.zoneName)}</span>
-      <span class="inc-age">${open ? timeAgo(i.createdAt) : `${i.outcome === 'false_alarm' ? 'False alarm' : 'Resolved'}`}</span>`;
-
-    // Resolved incidents collapse to a single line that toggles the full card.
-    if (!open && !expandedResolved.has(i.id)) {
-      return `
-      <article class="incident ${i.type} resolved collapsed">
-        <button class="inc-head card-toggle" data-toggle-resolved="${i.id}" aria-expanded="false">${head}</button>
-      </article>`;
-    }
-
     const conf = i.confidence != null && i.sources.includes('camera') && !i.note?.startsWith('Reported manually') ? `, ${(i.confidence * 100).toFixed(0)}% detector confidence` : '';
     const linkedTo = i.linkedTo && incidents.get(i.linkedTo);
     const linked = (i.linked || []).map(id => incidents.get(id)).filter(Boolean);
-    const sourceLine = [
+    const meta = [
       `${i.sources.map(s => s === 'camera' && i.simulated ? 'Camera (simulated footage)' : SOURCE[s] || s).join(' and ')}${conf}`,
       i.reportCount > 1 && `${i.reportCount} reports`,
       linkedTo && `from ${linkedTo.typeLabel.toLowerCase()} at ${linkedTo.zoneName}`,
@@ -314,7 +423,7 @@
     ].filter(Boolean).join(', ');
 
     const assigned = i.assignments || [];
-    const team = open && assigned.length ? `
+    const team = assigned.length ? `
       <div class="team">
         <h3>On it</h3>
         ${assigned.map(a => `
@@ -328,14 +437,14 @@
     const candidates = i.shortlist.length ? i.shortlist.map(v => `
       <div class="candidate">
         <div>
-          <h3>${esc(v.name)} ${v.online ? '<span class="status-dot on" title="Phone connected"></span>' : ''}</h3>
+          <h3>${v.online ? '<span class="status-dot on" title="Phone connected"></span>' : '<span class="status-dot" title="Phone offline"></span>'}${esc(v.name)}</h3>
           <p class="small muted">${esc(`${qualNames(v.qualifications)}, ${v.distance} m away`)}</p>
-          ${v.qualified ? '' : '<p class="small warn">No matching qualification</p>'}
+          ${v.qualified ? '' : '<p class="small warn">Not trained for this</p>'}
         </div>
         <button class="secondary" data-dispatch="${i.id}" data-vol="${v.id}">Send</button>
       </div>`).join('') : '<p class="small muted">No volunteers are free.</p>';
     const busy = i.busyCandidates?.length ? `
-      <h3>On other incidents</h3>
+      <h3 class="sub">On other incidents</h3>
       ${i.busyCandidates.map(v => `
       <div class="candidate">
         <div>
@@ -346,113 +455,189 @@
           data-confirm="${esc(`Take ${v.name} off ${v.currentTypeLabel} at ${v.currentZoneName}?`)}">Pull</button>
       </div>`).join('')}` : '';
 
-    // The main report is the volunteer report that raised the incident: what they typed, what they said
-    // (transcribed after it arrived) and their clip. Everything that came in afterwards (other volunteers'
-    // reports, and photos or videos from anyone) is the follow-up track below it, oldest first.
-    // A camera alert is its own main report, so on a camera incident every volunteer report is a follow-up.
-    const clipInfo = new Map((i.audioClips || []).map(c => [c.id, c]));
-    const said = (r, c) => r.transcriptStatus === 'done' ? `<p class="description">Said: ${esc(r.transcript)}</p>`
-      : r.transcriptStatus === 'pending' ? '<p class="small muted">Transcribing…</p>'
-      : r.transcriptStatus === 'unavailable' ? `<p class="small muted">No transcript available${c ? ', listen to the clip' : ''}</p>` : '';
-    const reportBody = r => {
-      const c = clipInfo.get(r.clipId);
-      return `
-        ${r.typedNote ? `<p class="description">Typed: ${esc(r.typedNote)}</p>` : ''}
-        ${said(r, c)}
-        ${c ? `
-          <div class="clip-line">
-            <audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>
-            <a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>
-          </div>` : ''}`;
-    };
+    // Everything after the report that raised it: other volunteers' reports, photos and videos, oldest first.
+    const sorted = [...(i.reports || [])].sort((a, b) => a.ts - b.ts);
+    const main = i.sources[0] === 'volunteer' ? sorted[0] : null;
+    const followUps = [
+      ...sorted.filter(r => r !== main).map(r => ({ ts: r.ts, what: r.update ? REPLY[r.update] : 'reported', r })),
+      ...sorted.flatMap(r => (r.media || []).map(m => ({ ts: m.ts, what: m.kind === 'video' ? 'added a video' : 'added a photo', r, m }))),
+    ].sort((a, b) => a.ts - b.ts);
     const mediaBody = (m, r) => `
       <div class="media-item ${m.kind}">
         ${m.kind === 'video'
           ? `<video controls playsinline preload="metadata" src="${esc(m.url)}" data-media="${esc(m.mediaId)}"></video>`
           : `<button class="media-photo" data-media-photo="${esc(m.url)}" data-by="${esc(r.volunteerName)}" aria-label="Enlarge photo from ${esc(r.volunteerName)}">
               <img src="${esc(m.url)}" alt="Photo from ${esc(r.volunteerName)}"></button>`}
-        <a class="button secondary" href="${esc(m.url)}?download=1">Download</a>
       </div>`;
-
-    const sorted = [...(i.reports || [])].sort((a, b) => a.ts - b.ts);
-    const main = i.sources[0] === 'volunteer' ? sorted[0] : null;
-    const mainReport = main ? `
-      <section class="main-report">
-        <p class="small"><strong>${esc(main.volunteerName)}</strong> <span class="muted">reported at ${clock(main.ts)}</span></p>
-        ${reportBody(main)}
-      </section>` : '';
-    const track = [
-      ...sorted.filter(r => r !== main).map(r => ({ ts: r.ts, what: 'reported', r })),
-      ...sorted.flatMap(r => (r.media || []).map(m => ({ ts: m.ts, what: m.kind === 'video' ? 'added a video' : 'added a photo', r, m }))),
-    ].sort((a, b) => a.ts - b.ts);
-    const followUp = track.length ? `
-      <section class="follow-up" aria-label="Follow-up">
-        <h3>Follow-up</h3>
-        <ol class="track">${track.map(e => `
+    const mediaCount = followUps.filter(f => f.m).length;
+    const reportCount = followUps.length - mediaCount;
+    const followUpLabel = [
+      reportCount && `${reportCount} more report${reportCount === 1 ? '' : 's'}`,
+      mediaCount && (mediaCount === 1 ? '1 photo or video' : `${mediaCount} photos or videos`),
+    ].filter(Boolean).join(', ');
+    const followUp = followUps.length ? `
+      <details class="more" ${keep(`follow:${i.id}`)}>
+        <summary>Follow-up: ${followUpLabel}</summary>
+        <ol class="track">${followUps.map(f => `
           <li>
-            <p class="small"><span class="muted">${clock(e.ts)}</span> <strong>${esc(e.r.volunteerName)}</strong> ${e.what}</p>
-            ${e.m ? mediaBody(e.m, e.r) : reportBody(e.r)}
+            <p class="small"><span class="muted">${clock(f.ts)}</span> <strong>${esc(f.r.volunteerName)}</strong> ${f.what}</p>
+            ${f.m ? mediaBody(f.m, f.r) : reportBody(i, f.r)}
           </li>`).join('')}
         </ol>
-      </section>` : '';
+      </details>` : '';
+    const timeline = (i.log || []).length > 1 ? `
+      <details class="more" ${keep(`log:${i.id}`)}>
+        <summary>Timeline</summary>
+        <ol class="timeline">${i.log.map(e => `<li><span class="muted">${clock(e.ts)}</span> ${esc(e.text)}</li>`).join('')}</ol>
+      </details>` : '';
 
-    const rec = i.recommendation;
     return `
-      <article class="incident ${i.type} ${i.status}" data-id="${i.id}">
-        ${open ? `<h2 class="inc-head">${head}</h2>`
-          : `<button class="inc-head card-toggle" data-toggle-resolved="${i.id}" aria-expanded="true">${head}</button>`}
-        <p class="inc-source">${esc(sourceLine)}</p>
-        ${i.note && !i.camera && i.sources.includes('volunteer') ? `<p class="description">“${esc(i.note)}”</p>` : ''}
-        ${i.reclassifiedFrom ? `<p class="small muted">AI reclassified from ${esc(i.reclassifiedFrom)}: ${esc(i.classificationReason || '')}</p>`
-          : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI assessment: ${esc(i.classificationReason)}</p>` : ''}
-        ${mainReport}
-        ${followUp}
-        ${situation(i)}
-        ${open ? decision(i) : ''}
+      <article class="incident ${i.type}" data-id="${i.id}">
+        <header class="inc-head">
+          <span class="tag ${i.type}">${esc(i.typeLabel)}</span>
+          <h2 class="inc-zone">${esc(i.zoneName)}</h2>
+          <span class="inc-age">${timeAgo(i.createdAt)}</span>
+        </header>
+        <p class="inc-meta"><span class="priority p${i.priority}">${PRIORITY[i.priority] || ''}.</span> ${esc(meta)}</p>
+        ${track(i)}
+        ${reply(i)}
+        ${read(i)}
+        ${decision(i)}
         ${team}
-        ${open ? `
-          <details class="more" data-more="${i.id}" ${openMore.has(i.id) ? 'open' : ''}>
-            <summary>Choose volunteers yourself</summary>
-            ${candidates}
-            ${busy}
-          </details>
-          <div class="inc-foot">
-            <button class="secondary" data-resolve="${i.id}">Mark resolved</button>
-            <button class="secondary" data-dismiss="${i.id}" data-confirm="${esc(`Mark ${i.typeLabel.toLowerCase()} at ${i.zoneName} as a false alarm? Anyone sent is stood down.`)}">False alarm</button>
-          </div>` : ''}
+        ${followUp}
+        ${timeline}
+        <details class="more" ${keep(`more:${i.id}`)}>
+          <summary>Choose volunteers yourself</summary>
+          ${candidates}
+          ${busy}
+        </details>
+        <div class="inc-foot">
+          <button class="${latestReply(i)?.update === 'sorted' ? 'suggested' : 'secondary'}" data-resolve="${i.id}">Mark resolved</button>
+          <button class="secondary" data-dismiss="${i.id}" data-confirm="${esc(`Mark ${i.typeLabel.toLowerCase()} at ${i.zoneName} as a false alarm? Anyone sent is stood down.`)}">False alarm</button>
+        </div>
       </article>`;
   }
 
+  // ---------- Case notes ----------
+  const OUTCOME = { false_alarm: 'False alarm', resolved: 'Resolved' };
+  function noteCard(i) {
+    const n = i.caseNote;
+    const m = n?.metrics;
+    const numbers = m ? [
+      ['Open for', duration(m.openMs)],
+      ['First person sent', m.toFirstSentMs != null ? `after ${duration(m.toFirstSentMs)}` : 'Nobody was sent'],
+      m.toFirstArrivalMs != null && ['First arrival', `after ${duration(m.toFirstArrivalMs)}`],
+      m.people.length && ['Sent', names(m.people)],
+      m.reports > 1 && ['Reports', String(m.reports)],
+    ].filter(Boolean) : [];
+    const list = (title, items, cls) => items?.length
+      ? `<section class="note-list ${cls}"><h3>${title}</h3><ul>${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul></section>` : '';
+    const lists = n?.status === 'ready'
+      ? list('Went well', n.wentWell, 'good') + list('To improve', n.improve, 'improve') + list('For next time', n.lessons, 'lesson') : '';
+    return `
+      <article class="note ${i.type}" data-id="${i.id}">
+        <header class="inc-head">
+          <span class="tag ${i.type}">${esc(i.typeLabel)}</span>
+          <h2 class="inc-zone">${esc(i.zoneName)}</h2>
+          <span class="outcome ${i.outcome}">${OUTCOME[i.outcome] || 'Closed'}</span>
+        </header>
+        <p class="inc-meta">${clock(i.createdAt)} to ${clock(i.resolvedAt)}${i.simulated ? ', from simulated footage' : ''}</p>
+        <div class="note-body ${i.snapshot ? 'has-photo' : ''}">
+          ${i.snapshot ? `<button class="photo" data-snapshot="${i.id}" aria-label="Enlarge camera photo"><img src="${i.followupSnapshot || i.snapshot}" alt="Camera photo of the incident"></button>` : ''}
+          <div>
+            <p class="note-summary ${n?.status === 'ready' ? '' : 'pending'}">${n?.status === 'ready' ? esc(n.summary) : 'Writing the case note…'}</p>
+            ${numbers.length ? `<dl class="numbers">${numbers.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
+          </div>
+        </div>
+        ${lists ? `<div class="note-lists">${lists}</div>` : ''}
+        ${(i.log || []).length ? `
+          <details class="more" ${keep(`notelog:${i.id}`)}>
+            <summary>Timeline</summary>
+            <ol class="timeline">${i.log.map(e => `<li><span class="muted">${clock(e.ts)}</span> ${esc(e.text)}</li>`).join('')}</ol>
+          </details>` : ''}
+        <footer class="note-foot">
+          <span class="small muted">${n?.status !== 'ready' ? '' : n.source === 'ai' ? 'Written by AI from the incident record. Check before sharing.' : 'Written from the incident record'}</span>
+          ${n?.status === 'ready' ? `<button class="secondary" data-copy-note="${i.id}">Copy note</button>` : ''}
+        </footer>
+      </article>`;
+  }
+
+  // Plain text for pasting into a debrief document.
+  function noteText(i) {
+    const n = i.caseNote, m = n.metrics;
+    const section = (title, items) => items?.length ? `\n${title}:\n${items.map(x => `- ${x}`).join('\n')}\n` : '';
+    return `${i.typeLabel} at ${i.zoneName}, ${clock(i.createdAt)} to ${clock(i.resolvedAt)} (${OUTCOME[i.outcome] || 'Closed'})\n\n${n.summary}\n`
+      + `\nOpen for ${duration(m.openMs)}. ${m.toFirstSentMs != null ? `First person sent after ${duration(m.toFirstSentMs)}.` : 'Nobody was sent.'}`
+      + `${m.toFirstArrivalMs != null ? ` First arrival after ${duration(m.toFirstArrivalMs)}.` : ''}\n`
+      + section('Went well', n.wentWell) + section('To improve', n.improve) + section('For next time', n.lessons)
+      + `\nTimeline:\n${(i.log || []).map(e => `${clock(e.ts)} ${e.text}`).join('\n')}\n`;
+  }
+
+  // ---------- Team rail ----------
+  function rosterHtml() {
+    if (!volunteers.length) return '<p class="muted">Nobody has joined yet. Volunteers join from the sign-up QR code on the camera page.</p>';
+    const where = v => {
+      if (v.status !== 'assigned' || !v.assignment) return `at ${zoneName(v.zoneId)}`;
+      return `${assignmentLabel[v.assignment.status] || 'sent'} to ${v.assignment.typeLabel.toLowerCase()} at ${v.assignment.zoneName}`;
+    };
+    const person = v => `
+      <li class="person ${v.status}">
+        <span class="status-dot ${v.online ? 'on' : ''}" title="${v.online ? 'Phone connected' : 'Phone offline'}"></span>
+        <span><strong>${esc(v.name)}</strong> <span class="muted">${esc(where(v))}</span>
+          <span class="person-quals">${esc(qualNames(v.qualifications))}${v.online ? '' : '. Phone offline'}</span></span>
+      </li>`;
+    const group = (title, list) => list.length ? `<h3 class="sub">${title} (${list.length})</h3><ul class="people">${list.map(person).join('')}</ul>` : '';
+    const free = volunteers.filter(v => v.status === 'available');
+    return `
+      ${free.length ? group('Free', free) : '<p class="small warn">Nobody is free.</p>'}
+      ${group('On incidents', volunteers.filter(v => v.status === 'assigned'))}
+      ${group('Unavailable', volunteers.filter(v => v.status !== 'available' && v.status !== 'assigned'))}`;
+  }
+
   // ---------- Rendering ----------
-  // Don't rebuild the cards while the coordinator is typing or choosing in one of them; catch up afterwards.
+  // Only the visible tab is built. Cards aren't rebuilt while the coordinator is typing or choosing in one.
   let renderPending = false;
   const busyEditing = () => !!document.activeElement?.closest?.('#incidents textarea, #incidents select');
   function render() {
     if (!config) return;
     if (busyEditing()) { renderPending = true; return; }
     renderPending = false;
-    const list = [...incidents.values()].sort((a, b) =>
-      (a.status === 'resolved') - (b.status === 'resolved') || (a.priority ?? 2) - (b.priority ?? 2) || b.createdAt - a.createdAt);
-    const openCount = list.filter(i => i.status !== 'resolved').length;
-    festival.textContent = `${config.festivalName}, ${openCount ? `${openCount} open incident${openCount > 1 ? 's' : ''}` : 'all clear'}`;
-    empty.hidden = list.length > 0;
+    const all = [...incidents.values()];
+    const open = all.filter(i => i.status !== 'resolved')
+      .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.createdAt - a.createdAt);
+    const closed = all.filter(i => i.status === 'resolved').sort((a, b) => (b.resolvedAt || 0) - (a.resolvedAt || 0));
+    liveCount.textContent = open.length || '';
+    notesCount.textContent = closed.length || '';
+    festival.textContent = config.festivalName;
+    document.title = open.length ? `(${open.length}) Coordinator | MaydAI` : 'Coordinator | MaydAI';
+
+    if (view === 'notes') {
+      notes.innerHTML = closed.map(noteCard).join('')
+        || '<div class="empty-state"><h2>No closed cases yet</h2><p>When you mark an incident resolved or a false alarm, its case note appears here.</p></div>';
+      return;
+    }
+
+    const free = volunteers.filter(v => v.status === 'available').length;
+    const unattended = open.filter(i => !(i.assignments || []).length).length;
+    overview.textContent = (open.length
+      ? `${open.length} open incident${open.length > 1 ? 's' : ''}${!unattended ? (open.length > 1 ? ', all with someone on them' : ', with someone on it')
+        : open.length === 1 ? ', nobody on it yet' : unattended === open.length ? ', nobody on any of them yet' : `, ${unattended} with nobody on them yet`}. `
+      : 'All clear. ')
+      + (volunteers.length ? `${free} of ${volunteers.length} volunteers free.` : 'No volunteers on shift yet.');
+    empty.hidden = open.length > 0;
+
     // Keep existing audio and video players (and anything playing) across re-renders: live updates arrive often.
     const PLAYERS = '#incidents audio[data-clip], #incidents video[data-media]';
     const playerKey = el => el.dataset.clip || el.dataset.media;
     const players = new Map([...document.querySelectorAll(PLAYERS)].map(el => [playerKey(el), el]));
     document.querySelectorAll('#incidents article').forEach(n => n.remove());
-    incidentsEl.insertAdjacentHTML('beforeend', list.map(incidentCard).join(''));
+    incidentsEl.insertAdjacentHTML('beforeend', open.map(incidentCard).join(''));
     document.querySelectorAll(PLAYERS).forEach(el => {
       const old = players.get(playerKey(el));
       if (old) el.replaceWith(old);
     });
-
-    roster.innerHTML = volunteers.map(v => `
-      <div class="candidate">
-        <div><h3>${v.online ? '<span class="status-dot on"></span>' : '<span class="status-dot"></span>'}${esc(v.name)}</h3>
-        <p class="muted">${qualNames(v.qualifications)}, at ${esc(zoneName(v.zoneId))}</p></div>
-        <span class="tag quiet">${v.status}</span>
-      </div>`).join('') || 'No volunteers yet.';
+    roster.innerHTML = rosterHtml();
+    conditions.textContent = config.conditions || 'No conditions set.';
   }
   const incidentsEl = document.getElementById('incidents');
   incidentsEl.addEventListener('focusout', () => setTimeout(() => { if (renderPending) render(); }, 0));
@@ -498,9 +683,10 @@
     const a = i && findStep(i, f.dataset.step);
     if (a) stepState(i, a)[f.dataset.field] = f.value;
   });
-  incidentsEl.addEventListener('toggle', e => {
-    const d = e.target.closest?.('[data-more]');
-    if (d) d.open ? openMore.add(d.dataset.more) : openMore.delete(d.dataset.more);
+  // Remember which folded sections are open, in both tabs.
+  document.addEventListener('toggle', e => {
+    const d = e.target.closest?.('details[data-keep]');
+    if (d) d.open ? openDetails.add(d.dataset.keep) : openDetails.delete(d.dataset.keep);
   }, true);
 
   document.addEventListener('click', e => {
@@ -549,12 +735,12 @@
     const fa = e.target.closest('[data-dismiss]');
     if (fa && confirm(fa.dataset.confirm)) socket.emit('incident:dismiss', { incidentId: fa.dataset.dismiss });
 
-    const tr = e.target.closest('[data-toggle-resolved]');
-    if (tr) {
-      const id = tr.dataset.toggleResolved;
-      expandedResolved.has(id) ? expandedResolved.delete(id) : expandedResolved.add(id);
-      render();
-      document.querySelector(`[data-toggle-resolved="${id}"]`)?.focus(); // render() rebuilt the button
+    const cp = e.target.closest('[data-copy-note]');
+    if (cp) {
+      const i = incidents.get(cp.dataset.copyNote);
+      navigator.clipboard?.writeText(noteText(i)).then(
+        () => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy note'; }, 1500); },
+        () => showBanner('Copying isn’t allowed here. Select the note text instead.', 'other'));
     }
 
     const s = e.target.closest('[data-snapshot]');
@@ -591,7 +777,7 @@
   snapshotClose.onclick = closeSnapshot;
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !snapshotModal.hidden) closeSnapshot(); });
 
-  setInterval(render, 15000); // keep "x min ago" and "clear for" fresh
+  setInterval(() => { if (view === 'live') render(); }, 15000); // keep "x min ago" and "clear for" fresh
 </script>
 </body>
 </html>

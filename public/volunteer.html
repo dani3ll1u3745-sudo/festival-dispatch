@@ -12,19 +12,43 @@
 <body class="vol">
 
 <!-- Assignment alert -->
-<div class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle">
-  <div class="grow">
-    <p style="font-size:1.1rem">You've been dispatched</p>
+<!-- Assignment: where to go in the coloured header; what to do, how, and how to stay safe in the sheet below. -->
+<div class="alert" id="alert" role="alertdialog" aria-labelledby="alertTitle" aria-describedby="alertSummary">
+  <div class="alert-head">
+    <p class="alert-kicker">You've been sent</p>
     <h1 id="alertTitle"></h1>
-    <p id="alertZone" style="font-size:1.3rem"></p>
-    <p id="alertSummary" style="margin-top:1rem"></p>
-    <p id="alertStatus" style="margin-top:1rem; font-weight:500"></p>
+    <p class="alert-zone" id="alertZone"></p>
+    <!-- The same progress the coordinator sees on their card -->
+    <ol class="vol-track" id="alertTrack" aria-label="Your progress"></ol>
   </div>
-  <div class="stack">
-    <a class="button full" id="directionsBtn" target="_blank" rel="noopener">Open directions</a>
-    <button class="secondary full" id="acceptBtn">Accept</button>
-    <button class="secondary full" id="arrivedBtn">I've arrived</button>
-    <button class="secondary full" id="hideBtn">Hide</button>
+  <div class="alert-sheet">
+    <p class="alert-summary" id="alertSummary"></p>
+    <section id="alertStepsWrap" hidden>
+      <h2>What to do</h2>
+      <ol class="alert-steps" id="alertSteps"></ol>
+    </section>
+    <p class="alert-safety" id="alertSafety" hidden></p>
+    <figure class="alert-photo" id="alertPhotoWrap" hidden>
+      <img id="alertPhoto" alt="">
+      <figcaption id="alertPhotoCaption"></figcaption>
+    </figure>
+    <section id="alertSiteWrap" hidden>
+      <h2 id="alertSiteTitle"></h2>
+      <p id="alertSite"></p>
+    </section>
+    <p class="alert-status" id="alertStatus" role="status"></p>
+  </div>
+  <!-- One next step at a time: on my way, then arrived, then tell the coordinator how it's going. -->
+  <div class="alert-actions">
+    <a class="button secondary full" id="directionsBtn" target="_blank" rel="noopener">Open directions</a>
+    <button class="full next-step" id="acceptBtn">I'm on my way</button>
+    <button class="full next-step" id="arrivedBtn" hidden>I've arrived</button>
+    <div class="reply-grid" id="replyGrid" hidden>
+      <button class="reply-btn sorted" id="sortedBtn">Sorted</button>
+      <button class="reply-btn need-help" id="helpBtn">Need more help</button>
+    </div>
+    <button class="secondary full" id="updateBtn" hidden>Add a voice or text update</button>
+    <button class="link-button" id="hideBtn">Hide for now</button>
   </div>
 </div>
 
@@ -86,12 +110,19 @@
         <span><span id="clipLabel">Voice clip ready</span>, <span id="clipDuration"></span></span>
         <button class="link-button" id="clipRemove" type="button">Remove clip</button>
       </div>
-      <div class="report-grid">
+      <div class="report-grid" id="reportGrid">
         <button class="report fire" data-report="fire">Report fire</button>
         <button class="report medical" data-report="medical">Report medical</button>
         <button class="report overcrowding" data-report="overcrowding">Report crowding</button>
         <button class="report other" data-report="other">Report other</button>
       </div>
+      <!-- While on a job, the same stage replies to the coordinator about it -->
+      <div class="report-grid" id="updateGrid" hidden>
+        <button class="report sorted" data-update="sorted">Sorted</button>
+        <button class="report need-help" data-update="need_help">Need more help</button>
+        <button class="report send-update" data-update="update">Send update</button>
+      </div>
+      <button class="link-button slate-link" id="switchStageBtn" type="button" hidden></button>
       <p class="report-status" id="reportStatus" role="status"></p>
     </div>
 
@@ -172,6 +203,8 @@
   zoneMsgOk.onclick = () => { zoneMsg.hidden = true; };
   socket.on('assignment:cancelled', ({ resolved, reassigned, standDown, falseAlarm }) => {
     assignment = null;
+    reportOther = false;
+    setStageMode(); // back to reporting new incidents
     alertEl.classList.remove('show');
     showAssignment.hidden = true;
     standby.innerHTML = falseAlarm ? '<strong>False alarm.</strong> The coordinator cancelled this incident. Standing by.'
@@ -213,6 +246,8 @@
     storeId(null);
     setLatest(null);
     me = null; assignment = null;
+    reportOther = false;
+    setStageMode();
     alertEl.classList.remove('show');
     showAssignment.hidden = true;
     standby.innerHTML = '<strong>Standing by.</strong> You\'ll get an alert here when you\'re needed.';
@@ -230,29 +265,91 @@
     const sameZone = a.zoneName === a.fromZoneName;
     alertZone.textContent = sameZone ? `You're already at ${a.zoneName}` : `Go to ${a.zoneName} (from ${a.fromZoneName})`;
     alertSummary.textContent = a.summary || '';
+    // A picture of what they're heading to; hidden if it can't load (e.g. the incident just closed).
+    alertPhotoWrap.hidden = !a.photo;
+    if (a.photo) {
+      alertPhoto.onerror = () => { alertPhotoWrap.hidden = true; };
+      alertPhoto.src = a.photo.url;
+      alertPhoto.alt = `${a.photo.caption} of the ${a.typeLabel.toLowerCase()} at ${a.zoneName}`;
+      alertPhotoCaption.textContent = a.photo.caption;
+    }
+    alertSteps.innerHTML = (a.steps || []).map(s => `<li>${FD.esc(s)}</li>`).join('');
+    alertStepsWrap.hidden = !(a.steps || []).length;
+    alertSafety.hidden = !a.safety;
+    alertSafety.innerHTML = a.safety ? `<strong>Stay safe.</strong> ${FD.esc(a.safety)}` : '';
+    alertSiteWrap.hidden = !a.siteNotes;
+    alertSiteTitle.textContent = `At ${a.zoneName}`;
+    alertSite.textContent = a.siteNotes || '';
+    alertEl.querySelector('.alert-sheet').scrollTop = 0;
     directionsBtn.href = a.directionsUrl;
-    directionsBtn.style.display = sameZone ? 'none' : ''; // .button's display rule overrides the hidden attribute
+    if (isNew) reportOther = false; // a new job: the stage replies about it
     updateAlertStatus();
-    showAssignment.hidden = false;
-    standby.innerHTML = `<strong>Assigned:</strong> ${FD.esc(a.typeLabel)} at ${FD.esc(a.zoneName)}`;
     if (isNew) FD.beep(4);
   }
+
+  // Where they are in the job, shared with the coordinator's card: sent, on the way, arrived, sorted.
+  const STAGES = ['Sent', 'On the way', 'Arrived', 'Sorted'];
+  const stageOf = a => a.lastUpdate === 'sorted' ? 3 : a.status === 'arrived' ? 2 : a.status === 'accepted' ? 1 : 0;
+
+  // Shows only the next step: on my way, then arrived, then how it's going. Also refreshes the main page.
   function updateAlertStatus() {
-    const s = assignment?.status;
-    acceptBtn.disabled = s === 'accepted' || s === 'arrived';
-    arrivedBtn.disabled = s === 'arrived';
-    alertStatus.textContent = s === 'accepted' ? 'Accepted. The coordinator knows you\u2019re on the way.' : s === 'arrived' ? 'Marked as arrived.' : '';
+    if (!assignment) return;
+    const a = assignment, s = a.status, arrived = s === 'arrived';
+    const n = stageOf(a);
+    alertTrack.innerHTML = STAGES.map((label, k) =>
+      `<li class="${k <= n ? 'done' : k === n + 1 ? 'next' : ''}">${label}${k <= n ? '<span class="visually-hidden">, done</span>' : ''}</li>`).join('');
+    acceptBtn.hidden = s === 'accepted' || arrived;
+    arrivedBtn.hidden = s !== 'accepted';
+    replyGrid.hidden = updateBtn.hidden = !arrived;
+    sortedBtn.disabled = a.lastUpdate === 'sorted';
+    // .button's display rule overrides the hidden attribute
+    directionsBtn.style.display = arrived || a.zoneName === a.fromZoneName ? 'none' : '';
+    alertStatus.textContent = a.lastUpdate === 'sorted' ? 'You told the coordinator it\u2019s sorted. They\u2019ll close it, or ask you for more.'
+      : a.lastUpdate === 'need_help' ? 'The coordinator knows you need more help. Stay safe and keep your distance.'
+      : a.lastUpdate === 'update' ? 'Your update went to the coordinator.'
+      : s === 'accepted' ? 'The coordinator knows you\u2019re on the way.'
+      : arrived ? 'The coordinator knows you\u2019re there. Tell them how it\u2019s going.' : '';
+    showAssignment.hidden = false;
+    standby.innerHTML = `<strong>${FD.esc(a.typeLabel)} at ${FD.esc(a.zoneName)}.</strong> ${
+      a.lastUpdate === 'sorted' ? 'You said it\u2019s sorted. Waiting for the coordinator to close it.'
+      : arrived ? 'You\u2019re there. Tell the coordinator how it\u2019s going below.'
+      : s === 'accepted' ? 'You\u2019re on your way.' : 'Open it to see what to do.'}`;
+    setStageMode();
   }
   function respond(status) {
     assignment.status = status;
     socket.emit('assignment:respond', { incidentId: assignment.incidentId, status });
     updateAlertStatus();
-    if (status === 'arrived') setTimeout(() => alertEl.classList.remove('show'), 800);
   }
   acceptBtn.onclick = () => respond('accepted');
   arrivedBtn.onclick = () => respond('arrived');
+  // One tap tells the coordinator; anything typed or recorded on the main page goes with it.
+  sortedBtn.onclick = () => sendUpdate('sorted');
+  helpBtn.onclick = () => sendUpdate('need_help');
+  // Details go through the main page, which has the microphone and the text box.
+  updateBtn.onclick = () => {
+    alertEl.classList.remove('show');
+    reportOther = false;
+    setStageMode();
+    document.querySelector('.stage').scrollIntoView({ block: 'start' });
+    note.focus();
+  };
   hideBtn.onclick = () => alertEl.classList.remove('show');
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
+
+  // ---- The report stage: reports a new incident, or, while on a job, replies to the coordinator about it ----
+  let reportOther = false; // on a job but reporting something else instead
+  const replying = () => !!assignment && !reportOther;
+  function setStageMode() {
+    const r = replying();
+    reportGrid.hidden = r;
+    updateGrid.hidden = !r;
+    switchStageBtn.hidden = !assignment;
+    switchStageBtn.textContent = r ? 'Report a different incident instead' : `Back to updating the coordinator on the ${assignment?.typeLabel.toLowerCase() || 'job'}`;
+    note.placeholder = r ? 'Type an update (optional if you recorded)' : 'Type what\u2019s happening (optional if you recorded)';
+    if (!micBtn.classList.contains('recording')) setListening(false);
+  }
+  switchStageBtn.onclick = () => { reportOther = !reportOther; setStageMode(); };
 
   // ---- Voice input ----
   // The volunteer only ever sees their clip: what they said is transcribed in the background, after the report
@@ -279,7 +376,7 @@
     micBtn.classList.toggle('recording', on);
     micBtn.setAttribute('aria-label', on ? 'Stop voice input' : 'Start voice input');
     micBtn.setAttribute('aria-pressed', String(on));
-    listening.textContent = !on ? 'Tap to describe what’s happening'
+    listening.textContent = !on ? (replying() ? 'Tap to tell the coordinator how it’s going' : 'Tap to describe what’s happening')
       : s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}. Tap to stop.` : 'Listening… Tap to stop.';
   }
 
@@ -465,17 +562,18 @@
   const newReportId = () => window.crypto?.randomUUID?.() || `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   // Sends straight away. If the phone's recognition is still finishing, its words follow in incident:transcript.
-  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', async () => {
-    if (!me) return;
+  // A new report has a type; a reply about the current job has updateFor and update instead.
+  async function send(fields, { needsWords = false, missing = '' } = {}) {
+    if (!me) return false;
     await stopVoice(); // a recording in progress becomes this report's clip
     const text = note.value.trim();
     const voice = pending;
-    if (b.dataset.report === 'other' && !text && !voice) {
-      reportStatus.textContent = 'Type what’s happening or record a voice clip.';
-      return;
+    if (needsWords && !text && !voice) {
+      reportStatus.textContent = missing;
+      return false;
     }
     const reportId = newReportId();
-    const payload = { type: b.dataset.report, source: 'volunteer', zoneId: me.zoneId, reporterId: me.id, note: text, reportId };
+    const payload = { ...fields, source: 'volunteer', zoneId: me.zoneId, reporterId: me.id, note: text, reportId };
     const speech = voice?.speech;
     if (speech?.done && speech.text) payload.transcript = speech.text;
     else if (speech) payload.transcriptPending = true;
@@ -485,11 +583,25 @@
       storeReport(res?.reportId || reportId); // its details arrive in 'report:status'
       if (res?.audioError) reportStatus.textContent = `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`;
     });
-    reportStatus.textContent = 'Sent to the coordinator.';
+    reportStatus.textContent = fields.updateFor ? 'Update sent to the coordinator.' : 'Sent to the coordinator.';
     note.value = '';
     if (pending === voice) clearPending({ sent: true });
     if (payload.transcriptPending) sendLateTranscript(reportId, speech);
-  }));
+    return true;
+  }
+  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () =>
+    send({ type: b.dataset.report }, { needsWords: b.dataset.report === 'other', missing: 'Type what’s happening or record a voice clip.' })));
+
+  // A reply about the current job: sorted, need more help, or an update in their own words.
+  async function sendUpdate(kind) {
+    if (!assignment) return;
+    const sent = await send({ updateFor: assignment.incidentId, update: kind, type: assignment.type },
+      { needsWords: kind === 'update', missing: 'Type your update or record a voice clip first.' });
+    if (!sent || !assignment) return;
+    assignment.lastUpdate = kind;
+    updateAlertStatus();
+  }
+  document.querySelectorAll('[data-update]').forEach(b => b.addEventListener('click', () => sendUpdate(b.dataset.update)));
 
   // Sends the phone's words once recognition finishes, or whatever it has heard a few seconds after stopping.
   function sendLateTranscript(reportId, speech) {
@@ -529,12 +641,13 @@
     latestEmpty.hidden = !!latest;
     latestBody.hidden = !latest;
     if (!latest) return;
-    latestTitle.textContent = `${latest.typeLabel} at ${latest.zoneName}`;
+    const UPDATE_TITLE = { sorted: 'You said it’s sorted', need_help: 'You asked for more help', update: 'Your update' };
+    latestTitle.textContent = latest.update ? `${UPDATE_TITLE[latest.update]}: ${latest.typeLabel.toLowerCase()} at ${latest.zoneName}` : `${latest.typeLabel} at ${latest.zoneName}`;
     latestTime.textContent = `Sent at ${new Date(latest.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     latestNote.hidden = !latest.typedNote;
     latestNote.textContent = latest.typedNote ? `You wrote: ${latest.typedNote}` : '';
     latestVoice.hidden = !latest.hadVoiceClip;
-    latestStatus.textContent = STATUS_TEXT[latest.status] || '';
+    latestStatus.textContent = latest.update && latest.status !== 'resolved' ? 'Sent to the coordinator' : STATUS_TEXT[latest.status] || '';
     const resolved = latest.status === 'resolved';
     addMediaBtn.hidden = resolved;
     latestResolved.hidden = !resolved;
