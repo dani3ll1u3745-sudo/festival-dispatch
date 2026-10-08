@@ -101,9 +101,26 @@ input[type=text]:focus, textarea:focus { outline: none; border-color: var(--acce
   min-height: 44px; padding: 0 .25rem; border: 0; background: none; color: var(--accent); font-weight: 700;
 }
 .link-button:hover { text-decoration: underline; }
-.report-entry { padding: .6rem 0; border-top: 1px solid var(--border); }
-.report-entry audio { width: 100%; margin: .4rem 0; display: block; }
-.report-entry .row { align-items: center; justify-content: space-between; }label.check { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; min-height: 44px; }
+/* Coordinator: the report that raised the incident, then a timeline of everything that came in afterwards. */
+.main-report { margin: .4rem 0 0; }
+.clip-line { display: flex; align-items: center; gap: .5rem; margin: .4rem 0; }
+.clip-line audio { flex: 1; min-width: 0; }
+.clip-line .button { min-height: 36px; padding: .3rem .6rem; font-size: .85rem; }
+.follow-up { margin-top: .9rem; }
+.track { list-style: none; margin: .35rem 0 0 .3rem; padding: 0 0 0 1rem; border-left: 2px solid var(--rule); }
+.track li { position: relative; padding: .3rem 0 .7rem; }
+.track li::before {
+  content: ""; position: absolute; left: calc(-1rem - 6px); top: .65rem;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--surface); border: 2px solid var(--slate);
+}
+.media-item { display: grid; gap: .3rem; max-width: 240px; margin-top: .35rem; }
+.media-item.video { max-width: none; }
+.media-item video { display: block; width: 100%; max-height: 60vh; border-radius: 8px; background: #111821; }
+.media-item .button { min-height: 36px; padding: .3rem .5rem; font-size: .85rem; }
+.media-photo, .media-photo:hover { display: block; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--rule); }
+.media-photo img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.incident .media-obs { margin: .4rem 0 0; font-size: .95rem; color: var(--slate); }
+label.check { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; min-height: 44px; }
 label.check input { width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--accent); }
 label.check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -328,6 +345,24 @@ body.vol .small { font-size: 15px; }
 .vol-section { padding: 1.25rem 0; border-top: 1px solid var(--rule); }
 .vol-section h2 { color: var(--ink); font-size: 1.1rem; }
 .link-button.slate-link, .link-button.slate-link:hover { color: var(--slate); padding: 0; }
+
+/* Your latest report: what was sent, where it stands, and photos or videos added to it. */
+.latest-title { margin: .25rem 0 0; font-weight: 700; color: var(--ink); }
+.latest-status { margin: .5rem 0 0; font-weight: 700; color: var(--ink); }
+.media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-top: .75rem; }
+.media-grid:empty { display: none; }
+.media-thumb { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--rule); }
+.media-thumb img, .media-thumb video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.media-thumb .play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%;
+  background: rgba(22, 35, 58, .72); color: #fff; pointer-events: none;
+}
+button.add-media, button.add-media:hover { margin-top: .75rem; background: var(--surface); border-color: var(--rule); color: var(--ink); }
+button.add-media:hover { background: #f3f4f6; }
+button.add-media:disabled:hover { background: var(--surface); border-color: var(--rule); }
+.upload-status { min-height: 1.5em; margin: .5rem 0 0; color: var(--ink); }
+.upload-status.error { color: var(--fire-strong); }
 
 @media (prefers-reduced-motion: reduce) {
   .banner { transition: none; }

@@ -3,7 +3,7 @@
 // arrives and the same volunteer is reassigned to it. Then two volunteers are sent
 // to one incident and stood down one at a time, and a volunteer describes an "other"
 // incident, camera sightings come and go, and a voice report's transcript arrives after
-// the report. Start the server first.
+// the report, a plan is run, and a volunteer adds a photo to their report. Start the server first.
 const { io } = require('socket.io-client');
 const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -186,7 +186,45 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const ok7 = !!step && failedStale && retried && notTwice;
   console.log(ok7 ? 'scenario 7 ok' : `scenario 7 FAILED (plan step: ${!!step}, stale failed: ${failedStale}, retried: ${retried}, not run twice: ${notTwice})`);
 
-  const ok = ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7;
+  // ---- Scenario 8: a volunteer adds a photo to their report ----
+  // Only checks the upload and the coordinator's view, never what the AI makes of it.
+  console.log('\n-- scenario 8: photo added to a report --');
+  // Its own phone: only the volunteer who sent a report can add to it.
+  const photographer = io(URL);
+  const { volunteer: snapper } = await photographer.emitWithAck('volunteer:join', { name: 'Snapper', qualifications: [] });
+  const photoReportId = `photo-${Date.now()}`;
+  const statuses = [];
+  photographer.on('report:status', s => statuses.push(s));
+  const mediaEvents = [];
+  coordinator.on('media:new', m => mediaEvents.push(m));
+  const r8 = await photographer.emitWithAck('incident:report', {
+    type: 'other', source: 'volunteer', zoneId: 'gate-a', reporterId: snapper.id,
+    note: 'Smoke behind the security tent', reportId: photoReportId,
+  });
+  const TINY_JPEG = Buffer.from('/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYwLjMxLjEwMgD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABMAAEBAAAAAAAAAAAAAAAAAAAABQEBAQAAAAAAAAAAAAAAAAAABgcQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/wAARCAAIAAgDASIAAhEAAxEA/9oADAMBAAIRAxEAPwCOANqi/9k=', 'base64');
+  const upload = await fetch(`${URL}/api/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/jpeg', 'X-Report-Id': photoReportId, 'X-Volunteer-Id': snapper.id, 'X-Media-Kind': 'photo' },
+    body: TINY_JPEG,
+  });
+  const { mediaId } = await upload.json();
+  const registered = await photographer.emitWithAck('report:media', { reportId: photoReportId, mediaId, kind: 'photo', frames: [] });
+  await wait(500);
+  const photoReport = incidents.get(r8.id)?.reports?.find(r => r.reportId === photoReportId);
+  const served = await fetch(`${URL}/api/media/${mediaId}`, { headers: { Range: 'bytes=0-9' } });
+  await served.arrayBuffer(); // read it, so the connection can close
+  const latestStatus = statuses.filter(s => s.reportId === photoReportId).pop();
+  console.log('upload:', upload.status, mediaId, '| registered:', registered, '| media:new:', mediaEvents,
+    '| served:', served.status, served.headers.get('content-type'), '| volunteer sees', latestStatus?.media.length, 'item(s)');
+  const ok8 = upload.ok && registered?.ok && mediaEvents.some(m => m.incidentId === r8.id && m.kind === 'photo')
+    && photoReport?.media.length === 1 && served.status === 206 && latestStatus?.media.length === 1;
+  console.log(ok8 ? 'scenario 8 ok' : 'scenario 8 FAILED');
+
+  const ok = ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8;
   console.log(ok ? '\nPASS: full flow works' : '\nFAIL');
-  process.exit(ok ? 0 : 1);
+  // Exit by closing everything rather than process.exit(): on Windows, exiting while fetch's connections
+  // are closing can crash Node after the result is printed. The timer is a backstop if something stays open.
+  process.exitCode = ok ? 0 : 1;
+  [coordinator, volunteer, camera, photographer].forEach(s => s.close());
+  setTimeout(() => process.exit(), 8000).unref();
 })();

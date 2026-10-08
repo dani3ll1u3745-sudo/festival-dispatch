@@ -95,6 +95,27 @@
       <p class="report-status" id="reportStatus" role="status"></p>
     </div>
 
+    <!-- The last report this volunteer sent; photos and videos can be added to it here, never while reporting -->
+    <div class="vol-section" id="latestReport">
+      <h2>Your latest report</h2>
+      <p class="slate" id="latestEmpty">Reports you send appear here, and you can add photos or videos to them.</p>
+      <div id="latestBody" hidden>
+        <p class="latest-title" id="latestTitle"></p>
+        <p class="small slate" id="latestTime"></p>
+        <p id="latestNote" hidden></p>
+        <p class="small" id="latestVoice" hidden>Voice clip sent</p>
+        <p class="latest-status" id="latestStatus" role="status"></p>
+        <div class="media-grid" id="latestMedia"></div>
+        <button class="add-media full" id="addMediaBtn" type="button">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+          Add photo or video
+        </button>
+        <p class="slate" id="latestResolved" hidden>This report is resolved.</p>
+        <input type="file" id="mediaInput" accept="image/*,video/*" hidden>
+        <p class="upload-status" id="uploadStatus" role="status"></p>
+      </div>
+    </div>
+
     <div class="vol-section">
       <button class="link-button slate-link" id="leaveBtn">Leave shift</button>
     </div>
@@ -119,7 +140,7 @@
     if (!id) return;
     // Reconnect after a locked screen or reload: the server re-links this phone.
     socket.emit('volunteer:hello', { id }, ({ volunteer }) => {
-      if (!volunteer) { storeId(null); me = null; showJoin(); return; } // server was restarted
+      if (!volunteer) { storeId(null); me = null; setLatest(null); showJoin(); return; } // server was restarted
       const firstLoad = !me;
       me = volunteer;
       showShift();
@@ -190,6 +211,7 @@
     note.value = '';
     socket.emit('volunteer:leave', { id: me.id });
     storeId(null);
+    setLatest(null);
     me = null; assignment = null;
     alertEl.classList.remove('show');
     showAssignment.hidden = true;
@@ -459,8 +481,9 @@
     else if (speech) payload.transcriptPending = true;
     if (voice?.clip) payload.audio = { data: await voice.clip.blob.arrayBuffer(), mime: voice.clip.mime, durationSec: voice.durationSec };
     socket.emit('incident:report', payload, res => {
-      if (res?.error) reportStatus.textContent = res.error;
-      else if (res?.audioError) reportStatus.textContent = `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`;
+      if (res?.error) { reportStatus.textContent = res.error; return; }
+      storeReport(res?.reportId || reportId); // its details arrive in 'report:status'
+      if (res?.audioError) reportStatus.textContent = `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`;
     });
     reportStatus.textContent = 'Sent to the coordinator.';
     note.value = '';
@@ -475,6 +498,170 @@
       if (!speech.done) { try { speech.recognition.abort(); } catch {} }
       socket.emit('incident:transcript', { reportId, text: speech.text, unavailable: !speech.text });
     });
+  }
+
+  // ---- Your latest report: where it stands, and photos or videos added to it ----
+  // The server sends 'report:status' when the report changes and again after a reconnect. Updates for
+  // older reports can still arrive, so only the remembered report, or a newer one, replaces what's shown.
+  const LATEST_KEY = 'fd-latest-report';
+  const storedReport = () => { try { return localStorage.getItem(LATEST_KEY); } catch { return null; } };
+  const storeReport = id => { try { id ? localStorage.setItem(LATEST_KEY, id) : localStorage.removeItem(LATEST_KEY); } catch {} };
+  const STATUS_TEXT = { notified: 'Coordinator notified', help_on_way: 'Help is on the way', resolved: 'Resolved' };
+  const SMALL_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  let latest = null;
+
+  socket.on('report:status', s => {
+    if (latest && s.reportId !== latest.reportId && s.reportId !== storedReport() && s.ts < latest.ts) return;
+    if (s.reportId !== latest?.reportId) setUpload('');
+    latest = s;
+    storeReport(s.reportId);
+    renderLatest();
+  });
+
+  function setLatest(s) {
+    latest = s;
+    if (!s) storeReport(null);
+    setUpload('');
+    renderLatest();
+  }
+
+  function renderLatest() {
+    latestEmpty.hidden = !!latest;
+    latestBody.hidden = !latest;
+    if (!latest) return;
+    latestTitle.textContent = `${latest.typeLabel} at ${latest.zoneName}`;
+    latestTime.textContent = `Sent at ${new Date(latest.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    latestNote.hidden = !latest.typedNote;
+    latestNote.textContent = latest.typedNote ? `You wrote: ${latest.typedNote}` : '';
+    latestVoice.hidden = !latest.hadVoiceClip;
+    latestStatus.textContent = STATUS_TEXT[latest.status] || '';
+    const resolved = latest.status === 'resolved';
+    addMediaBtn.hidden = resolved;
+    latestResolved.hidden = !resolved;
+    // Only redraw the thumbnails when they changed, so videos don't reload on every status update.
+    const key = latest.media.map(m => m.mediaId).join();
+    if (latestMedia.dataset.key === key) return;
+    latestMedia.dataset.key = key;
+    latestMedia.innerHTML = latest.media.map(m => m.kind === 'video'
+      ? `<div class="media-thumb"><video src="${FD.esc(m.url)}#t=0.1" muted playsinline preload="metadata" aria-label="Video you added"></video><span class="play">${SMALL_PLAY}</span></div>`
+      : `<div class="media-thumb"><img src="${FD.esc(m.url)}" alt="Photo you added"></div>`).join('');
+  }
+  renderLatest();
+
+  function setUpload(text, isError = false) {
+    uploadStatus.textContent = text;
+    uploadStatus.classList.toggle('error', isError);
+  }
+
+  // A failure the volunteer can act on: the message says what went wrong and what to do.
+  class UploadError extends Error {}
+
+  addMediaBtn.onclick = () => mediaInput.click();
+  mediaInput.onchange = async () => {
+    const file = mediaInput.files[0];
+    mediaInput.value = ''; // so choosing the same file again still fires
+    if (!file || !latest || !me) return;
+    const reportId = latest.reportId;
+    const type = file.type || guessVideoType(file.name);
+    const kind = type.startsWith('video/') ? 'video' : type.startsWith('image/') ? 'photo' : null;
+    addMediaBtn.disabled = true;
+    setUpload('Uploading…');
+    try {
+      if (!kind) throw new UploadError('That file isn’t a photo or a video. Choose a photo or a video.');
+      let body = file, frames = [];
+      if (kind === 'photo') body = await photoAsJpeg(file);
+      else frames = await videoStills(file);
+      const res = await fetch('/api/media', {
+        method: 'POST',
+        headers: { 'Content-Type': kind === 'photo' ? 'image/jpeg' : type, 'X-Report-Id': reportId, 'X-Volunteer-Id': me.id, 'X-Media-Kind': kind },
+        body,
+      }).catch(() => { throw new UploadError('The upload didn’t get through. Check your connection and try again.'); });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new UploadError(data.error || `The upload failed (error ${res.status}). Try again in a moment.`);
+      const ack = await socket.timeout(15000).emitWithAck('report:media', { reportId, mediaId: data.mediaId, kind, frames })
+        .catch(() => { throw new UploadError('Uploaded, but the server didn’t confirm it. Check your connection and add it again.'); });
+      if (ack?.error) throw new UploadError(ack.error);
+      setUpload('Added to your report.');
+    } catch (err) {
+      setUpload(err instanceof UploadError ? err.message : 'Something went wrong adding that file. Try again, or choose another one.', true);
+    } finally {
+      addMediaBtn.disabled = false;
+    }
+  };
+
+  // Some phones leave a video's type blank; the server needs it to accept the file.
+  function guessVideoType(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    return { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm' }[ext] || '';
+  }
+
+  // Draws a picture onto a canvas no larger than maxSide on its longest side.
+  function drawScaled(source, width, height, maxSide) {
+    const scale = Math.min(1, maxSide / Math.max(width, height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  // Photos go up as a JPEG of at most 1600px: phone photos are several MB and the detail isn't needed.
+  async function photoAsJpeg(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode().catch(() => { throw new UploadError('That photo couldn’t be opened. Try taking it again, or choose another.'); });
+      const canvas = drawScaled(img, img.naturalWidth, img.naturalHeight, 1600);
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8));
+      if (!blob) throw new UploadError('That photo couldn’t be prepared. Try another one.');
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // Videos go up unchanged, with 4 stills for the AI (it can't watch video). Stills are best effort:
+  // if the phone can't produce them, the video still goes to the coordinator.
+  async function videoStills(file) {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.preload = 'auto';
+    video.hidden = true;
+    document.body.append(video);
+    const once = (event, ms) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`${event} timed out`)), ms);
+      video.addEventListener(event, () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+    try {
+      await new Promise((resolve, reject) => {
+        const fail = () => { clearTimeout(t); reject(new UploadError('That video couldn’t be opened. Try recording it again, or choose another.')); };
+        const t = setTimeout(fail, 10000);
+        video.onloadedmetadata = () => { clearTimeout(t); resolve(); };
+        video.onerror = fail;
+        video.src = url;
+      });
+      if (!Number.isFinite(video.duration)) throw new UploadError('That video’s length couldn’t be read. Try recording it again.');
+      if (video.duration > 30.5) throw new UploadError('Videos can be up to 30 seconds. Trim it and try again.');
+      const frames = [];
+      try {
+        // iPhones only draw a video's frames once it has started playing; muted video may play without a tap.
+        await video.play().catch(() => {});
+        video.pause();
+        for (const at of [0.1, 0.35, 0.6, 0.85]) {
+          video.currentTime = at * video.duration;
+          await once('seeked', 5000);
+          frames.push(drawScaled(video, video.videoWidth, video.videoHeight, 768).toDataURL('image/jpeg', 0.7));
+        }
+      } catch { /* keep whatever stills were taken */ }
+      return frames;
+    } finally {
+      video.remove();
+      URL.revokeObjectURL(url);
+    }
   }
 </script>
 </body>

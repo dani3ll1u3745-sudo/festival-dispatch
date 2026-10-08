@@ -75,10 +75,15 @@
   // Updates leave out the photos unless one changed, so keep the ones we already have.
   socket.on('incident:updated', i => { incidents.set(i.id, { ...incidents.get(i.id), ...i }); render(); });
   socket.on('volunteers:updated', v => { volunteers = v; render(); });
+  socket.on('media:new', m => {
+    FD.beep(1);
+    showBanner(`${m.volunteerName} added a ${m.kind === 'video' ? 'video' : 'photo'}`, 'media');
+  });
 
   function showBanner(text, type) {
     banner.textContent = text;
-    banner.style.background = `var(--${type === 'overcrowding' ? 'crowd' : type}-strong)`; // darker shade keeps white text AA
+    banner.style.background = type === 'media' ? 'var(--accent)'
+      : `var(--${type === 'overcrowding' ? 'crowd' : type}-strong)`; // darker shade keeps white text AA
     banner.classList.add('show');
     clearTimeout(showBanner.t);
     showBanner.t = setTimeout(() => banner.classList.remove('show'), 4000);
@@ -95,7 +100,6 @@
   const typeLabel = t => config.incidentTypes[t]?.label || t;
   const zoneName = id => config.zones[id]?.name || id;
   const assignmentLabel = { sent: 'notified', accepted: 'on the way', arrived: 'arrived' };
-  const fmtDuration = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const SOURCE = { camera: 'Camera', volunteer: 'Volunteer report', coordinator: 'Opened from a plan' };
   const PHONE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
   const TICK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -154,7 +158,8 @@
       ${photo}
       ${facts.length ? `<ul class="facts">${facts.map(([t, c]) => `<li class="${c}">${esc(t)}</li>`).join('')}</ul>` : ''}
       ${rec ? `<p class="insight">${esc(rec.insight)}</p>`
-        : !i.snapshot ? '<p class="insight pending">AI is reading the report…</p>' : ''}`;
+        : !i.snapshot ? '<p class="insight pending">AI is reading the report…</p>' : ''}
+      ${i.mediaObservations ? `<p class="media-obs">From photos and videos: ${esc(i.mediaObservations)}</p>` : ''}`;
   }
 
   // ---------- The plan ----------
@@ -274,7 +279,8 @@
             ${other.why ? `<span class="option-why">${esc(other.why)}</span>` : ''}
             <span class="option-switch">Switch</span>
           </button>` : ''}
-        <p class="ai-note">${i.analysing ? 'New information came in. The AI is updating this advice…'
+        <p class="ai-note">${i.analysing && i.analysingMedia ? 'Reanalysing with new media…'
+          : i.analysing ? 'New information came in. The AI is updating this advice…'
           : rec.source !== 'ai' ? 'Standard steps (AI unavailable)'
           : rec.updated ? 'Updated with the latest information. Suggested by AI, check before running.'
           : 'Suggested by AI. Check before running.'}</p>
@@ -340,27 +346,55 @@
           data-confirm="${esc(`Take ${v.name} off ${v.currentTypeLabel} at ${v.currentZoneName}?`)}">Pull</button>
       </div>`).join('')}` : '';
 
-    // Each volunteer report: what they typed, what they said (transcribed after it arrived) and their clip.
+    // The main report is the volunteer report that raised the incident: what they typed, what they said
+    // (transcribed after it arrived) and their clip. Everything that came in afterwards (other volunteers'
+    // reports, and photos or videos from anyone) is the follow-up track below it, oldest first.
+    // A camera alert is its own main report, so on a camera incident every volunteer report is a follow-up.
     const clipInfo = new Map((i.audioClips || []).map(c => [c.id, c]));
     const said = (r, c) => r.transcriptStatus === 'done' ? `<p class="description">Said: ${esc(r.transcript)}</p>`
       : r.transcriptStatus === 'pending' ? '<p class="small muted">Transcribing…</p>'
       : r.transcriptStatus === 'unavailable' ? `<p class="small muted">No transcript available${c ? ', listen to the clip' : ''}</p>` : '';
-    const reports = i.reports?.length ? `
-      <h3 style="margin-top:.6rem">Reports</h3>
-      ${[...i.reports].sort((a, b) => a.ts - b.ts).map(r => {
-        const c = clipInfo.get(r.clipId);
-        return `
-      <div class="report-entry">
-        <div class="row">
-          <span class="small"><strong>${esc(r.volunteerName)}</strong>
-            <span class="muted">${new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${c ? `, ${fmtDuration(c.durationSec)}` : ''}</span></span>
-          ${c ? `<a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>` : ''}
-        </div>
+    const reportBody = r => {
+      const c = clipInfo.get(r.clipId);
+      return `
         ${r.typedNote ? `<p class="description">Typed: ${esc(r.typedNote)}</p>` : ''}
         ${said(r, c)}
-        ${c ? `<audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>` : ''}
+        ${c ? `
+          <div class="clip-line">
+            <audio controls preload="none" src="/api/audio/${esc(c.id)}" data-clip="${esc(c.id)}"></audio>
+            <a class="button secondary" href="/api/audio/${esc(c.id)}?download=1">Download</a>
+          </div>` : ''}`;
+    };
+    const mediaBody = (m, r) => `
+      <div class="media-item ${m.kind}">
+        ${m.kind === 'video'
+          ? `<video controls playsinline preload="metadata" src="${esc(m.url)}" data-media="${esc(m.mediaId)}"></video>`
+          : `<button class="media-photo" data-media-photo="${esc(m.url)}" data-by="${esc(r.volunteerName)}" aria-label="Enlarge photo from ${esc(r.volunteerName)}">
+              <img src="${esc(m.url)}" alt="Photo from ${esc(r.volunteerName)}"></button>`}
+        <a class="button secondary" href="${esc(m.url)}?download=1">Download</a>
       </div>`;
-      }).join('')}` : '';
+
+    const sorted = [...(i.reports || [])].sort((a, b) => a.ts - b.ts);
+    const main = i.sources[0] === 'volunteer' ? sorted[0] : null;
+    const mainReport = main ? `
+      <section class="main-report">
+        <p class="small"><strong>${esc(main.volunteerName)}</strong> <span class="muted">reported at ${clock(main.ts)}</span></p>
+        ${reportBody(main)}
+      </section>` : '';
+    const track = [
+      ...sorted.filter(r => r !== main).map(r => ({ ts: r.ts, what: 'reported', r })),
+      ...sorted.flatMap(r => (r.media || []).map(m => ({ ts: m.ts, what: m.kind === 'video' ? 'added a video' : 'added a photo', r, m }))),
+    ].sort((a, b) => a.ts - b.ts);
+    const followUp = track.length ? `
+      <section class="follow-up" aria-label="Follow-up">
+        <h3>Follow-up</h3>
+        <ol class="track">${track.map(e => `
+          <li>
+            <p class="small"><span class="muted">${clock(e.ts)}</span> <strong>${esc(e.r.volunteerName)}</strong> ${e.what}</p>
+            ${e.m ? mediaBody(e.m, e.r) : reportBody(e.r)}
+          </li>`).join('')}
+        </ol>
+      </section>` : '';
 
     const rec = i.recommendation;
     return `
@@ -371,7 +405,8 @@
         ${i.note && !i.camera && i.sources.includes('volunteer') ? `<p class="description">“${esc(i.note)}”</p>` : ''}
         ${i.reclassifiedFrom ? `<p class="small muted">AI reclassified from ${esc(i.reclassifiedFrom)}: ${esc(i.classificationReason || '')}</p>`
           : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI assessment: ${esc(i.classificationReason)}</p>` : ''}
-        ${reports}
+        ${mainReport}
+        ${followUp}
         ${situation(i)}
         ${open ? decision(i) : ''}
         ${team}
@@ -401,13 +436,15 @@
     const openCount = list.filter(i => i.status !== 'resolved').length;
     festival.textContent = `${config.festivalName}, ${openCount ? `${openCount} open incident${openCount > 1 ? 's' : ''}` : 'all clear'}`;
     empty.hidden = list.length > 0;
-    // Keep existing audio players (and anything playing) across re-renders: live updates arrive often.
-    const players = new Map([...document.querySelectorAll('#incidents audio[data-clip]')].map(a => [a.dataset.clip, a]));
+    // Keep existing audio and video players (and anything playing) across re-renders: live updates arrive often.
+    const PLAYERS = '#incidents audio[data-clip], #incidents video[data-media]';
+    const playerKey = el => el.dataset.clip || el.dataset.media;
+    const players = new Map([...document.querySelectorAll(PLAYERS)].map(el => [playerKey(el), el]));
     document.querySelectorAll('#incidents article').forEach(n => n.remove());
     incidentsEl.insertAdjacentHTML('beforeend', list.map(incidentCard).join(''));
-    document.querySelectorAll('#incidents audio[data-clip]').forEach(a => {
-      const old = players.get(a.dataset.clip);
-      if (old) a.replaceWith(old);
+    document.querySelectorAll(PLAYERS).forEach(el => {
+      const old = players.get(playerKey(el));
+      if (old) el.replaceWith(old);
     });
 
     roster.innerHTML = volunteers.map(v => `
@@ -522,24 +559,34 @@
 
     const s = e.target.closest('[data-snapshot]');
     if (s) openSnapshot(s.dataset.snapshot);
+    const mp = e.target.closest('[data-media-photo]');
+    if (mp) openMediaPhoto(mp);
   });
 
   // ---------- Photo viewer ----------
-  let snapshotFrom = null;
-  function openSnapshot(id) {
-    const i = incidents.get(id);
-    snapshotPhotos.innerHTML = [
-      i?.snapshot && `<figure><img src="${i.snapshot}" alt="Camera photo when the alert fired"><figcaption class="small muted">When the alert fired</figcaption></figure>`,
-      i?.followupSnapshot && `<figure><img src="${i.followupSnapshot}" alt="Camera photo about 15 seconds later"><figcaption class="small muted">About 15 seconds later</figcaption></figure>`,
-    ].filter(Boolean).join('');
-    snapshotFrom = id;
+  let returnFocus = null; // selector for the thumbnail that opened the viewer
+  function showViewer(html, from) {
+    snapshotPhotos.innerHTML = html;
+    returnFocus = from;
     snapshotModal.hidden = false;
     snapshotClose.focus();
+  }
+  function openSnapshot(id) {
+    const i = incidents.get(id);
+    showViewer([
+      i?.snapshot && `<figure><img src="${i.snapshot}" alt="Camera photo when the alert fired"><figcaption class="small muted">When the alert fired</figcaption></figure>`,
+      i?.followupSnapshot && `<figure><img src="${i.followupSnapshot}" alt="Camera photo about 15 seconds later"><figcaption class="small muted">About 15 seconds later</figcaption></figure>`,
+    ].filter(Boolean).join(''), `[data-snapshot="${id}"]`);
+  }
+  function openMediaPhoto(btn) {
+    const url = btn.dataset.mediaPhoto, by = btn.dataset.by;
+    showViewer(`<figure><img src="${esc(url)}" alt="Photo from ${esc(by)}"><figcaption class="small muted">Photo from ${esc(by)}</figcaption></figure>`,
+      `[data-media-photo="${CSS.escape(url)}"]`);
   }
   function closeSnapshot() {
     snapshotModal.hidden = true;
     snapshotPhotos.innerHTML = '';
-    document.querySelector(`[data-snapshot="${snapshotFrom}"]`)?.focus();
+    if (returnFocus) document.querySelector(returnFocus)?.focus();
   }
   snapshotClose.onclick = closeSnapshot;
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !snapshotModal.hidden) closeSnapshot(); });
