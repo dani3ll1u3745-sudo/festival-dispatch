@@ -25,13 +25,15 @@
   },
   "qualifications": {
     "first_aid": "First aid",
-    "fire_warden": "Fire warden",
-    "crowd_control": "Crowd control"
+    "cpr": "CPR certified",
+    "fire_response": "Fire response",
+    "crowd_control": "Crowd control",
+    "emergency_coordination": "Emergency response coordination"
   },
   "incidentTypes": {
-    "fire":         { "label": "Fire",         "priority": 1, "requires": ["fire_warden", "first_aid"] },
-    "medical":      { "label": "Medical",      "priority": 2, "requires": ["first_aid"] },
-    "overcrowding": { "label": "Overcrowding", "priority": 3, "requires": ["crowd_control"] },
+    "fire":         { "label": "Fire",         "priority": 1, "requires": ["fire_response", "first_aid", "emergency_coordination"] },
+    "medical":      { "label": "Medical",      "priority": 2, "requires": ["first_aid", "cpr"] },
+    "overcrowding": { "label": "Overcrowding", "priority": 3, "requires": ["crowd_control", "emergency_coordination"] },
     "other":        { "label": "Other",        "priority": 2, "requires": [] }
   }
 }

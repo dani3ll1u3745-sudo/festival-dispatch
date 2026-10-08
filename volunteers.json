@@ -1,5 +1,5 @@
 [
   { "id": "seed-priya", "name": "Priya", "qualifications": ["first_aid"],                  "zoneId": "gate-a",         "status": "available" },
   { "id": "seed-tom",   "name": "Tom",   "qualifications": ["crowd_control"],              "zoneId": "food-court",     "status": "available" },
-  { "id": "seed-mei",   "name": "Mei",   "qualifications": ["fire_warden", "first_aid"],   "zoneId": "first-aid-tent", "status": "busy" }
+  { "id": "seed-mei",   "name": "Mei",   "qualifications": ["fire_response", "first_aid"],  "zoneId": "first-aid-tent", "status": "busy" }
 ]
