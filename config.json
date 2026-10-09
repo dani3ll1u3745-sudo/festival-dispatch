@@ -21,8 +21,13 @@
     "first-aid-tent": {
       "name": "First Aid Tent", "lat": -37.8263, "lng": 144.9722,
       "notes": "Two paramedics on duty, an AED, shade and cooling. Stretcher access from the service road behind the tent."
+    },
+    "info-tent": {
+      "name": "Info Tent", "lat": -37.8222, "lng": 144.9712,
+      "notes": "Lost and found point for people, just inside Gate A. Always staffed by security, with shade, water and a quiet corner. A child is only handed over once the guardian has named the child, the child recognises them and security has checked ID."
     }
   },
+  "meetingZoneId": "info-tent",
   "qualifications": {
     "first_aid": "First aid",
     "cpr": "CPR certified",
@@ -34,6 +39,9 @@
     "fire":         { "label": "Fire",         "priority": 1, "requires": ["fire_response", "first_aid", "emergency_coordination"] },
     "medical":      { "label": "Medical",      "priority": 2, "requires": ["first_aid", "cpr"] },
     "overcrowding": { "label": "Overcrowding", "priority": 3, "requires": ["crowd_control", "emergency_coordination"] },
-    "other":        { "label": "Other",        "priority": 2, "requires": [] }
+    "other":        { "label": "Other",        "priority": 2, "requires": [] },
+    "lost_person":    { "label": "Someone lost",   "priority": 2, "requires": [] },
+    "missing_person": { "label": "Missing person", "priority": 2, "requires": [] },
+    "found_person":   { "label": "Found person",   "priority": 2, "requires": [] }
   }
 }

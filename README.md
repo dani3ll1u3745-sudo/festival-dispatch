@@ -117,6 +117,40 @@ This one needs the AI (step 3) and a webcam.
 
 > The AI writes a fresh judgement each time, so the exact wording varies.
 
+### Scenario 4: a lost child, found and reunited
+
+This one needs the AI, three screens, and about 3 minutes. Open two volunteer tabs with **`/volunteer.html?demo`**. In a demo, each tab keeps its own volunteer, and a **Demo** row of sample reports appears under the text box. Don't name them Priya, Tom or Mei: those are the simulated volunteers already on the roster. They show as online and can be sent, but no phone is behind them.
+
+1. **Setup.** In tab 1, join as **Ana**, posted at **Gate A**: Ana is with the mum. In tab 2, join as **Ben**, posted at the **Food Court**.
+2. **The mum asks for help.** In Ana's tab, tap **Missing child** in the Demo row, then **Report someone lost**. The AI works out from the words that Ana is with someone looking for a child.
+3. **The AI reads it.** On the **Coordinator** screen, within a few seconds, the card shows who to look for: *Leo, 5, red dinosaur hoodie, last seen at the Food Court*. It is marked **Urgent** because Leo is a child. The plan follows in about 10 seconds: alert volunteers where he was last seen, and send someone to search there.
+4. **Ask the mum for more.** Under the profile, the **Ask Ana** box already holds the question the AI thinks matters most (e.g. *does Leo have any medical needs?*). Click **Ask Ana**.
+   - Ana's phone switches to answering it: the question sits above the microphone.
+   - Tap **Sample answer**, then **Send answer**. You can also answer by voice.
+   - The answer lands on the **same card** under the question it answers, not as a new incident.
+   - The AI re-reads Leo with it: the backpack joins his description, and the advice updates.
+   - Ana can also tap **Add more detail** under her report at any time, without being asked.
+5. **Run the lookout.** Ben's phone shows **Look out for this person** with Leo's description. It shows no photo and no surname.
+6. **Ben finds him.** Tap **I've found them**, then **Found child** in the Demo row, then **Report someone lost**. This time the AI works out that the child is with Ben. The sample is deliberately different: a grey striped T-shirt, no hoodie.
+7. **The AI makes the connection.** The coordinator hears an alert: **Possible match**. The found child's card shows both reports side by side, with what agrees (✓) and what differs (≠), for example *hoodie probably taken off*. The AI also gives a likelihood, about 90%, and recommends how to check.
+8. **A person checks.** Click **Ask Ben for a photo to show the family**.
+   1. Ben's phone asks for a photo of the child. Take one, using anyone or anything.
+   2. The photo goes only to Ana's phone: *"Show their mum Sarah this photo. Is this Leo?"*
+   3. Tap **Yes, it's them**.
+   4. Ben's phone used to have the lookout, and it now gets **Search over**.
+9. **Bring them together.** Click **Send Ben and Ana to the Info Tent**. Both phones get a **Reunion** assignment with directions. Ben's includes the hand-over rule: hand Leo over only after security checks the guardian's ID.
+10. **Reunited.** On Ben's phone, tap **I'm on my way**, **I've arrived**, then **Reunited**. On the coordinator, click **Mark reunited and close both**. The case note in **Case notes** explains how the match was found and checked. The photo of Leo has been deleted.
+
+**Then show that it works for adults too, in about 40 seconds.** Run the **Missing friend** sample from Ana's tab, then the **Found adult** sample from Ben's.
+- The AI marks both reports low priority and suggests no site-wide alert.
+- For the check, it recommends **asking them**, not a photo. Sam is an adult who can decide for himself.
+- Click it. On Ben's phone, tap **They'd rather not**. Ana's phone is only told that Sam is safe, never where he is.
+
+Other things to show:
+- **Not sure** puts the match back, so you can try another check.
+- **Not a match** tells both volunteers and keeps the search going.
+- **Or: a photo of the family, shown to them** reverses the check: the family's volunteer photographs the mum, and the finder asks the child if they recognise her.
+
 ### Also try
 
 - Add a photo to your report from the volunteer screen.

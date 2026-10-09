@@ -73,7 +73,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
-  const socket = io();
+  const socket = io({ query: { view: 'coordinator' } }); // staff screens get incidents; volunteers' phones don't
   const { esc, timeAgo } = FD;
   let incidents = new Map();
   let volunteers = [];
@@ -112,8 +112,14 @@
     FD.beep(u.update === 'need_help' ? 3 : 1);
     showBanner(u.update === 'need_help' ? `${u.volunteerName} needs more help at ${u.zoneName}`
       : u.update === 'sorted' ? `${u.volunteerName} says the ${u.typeLabel.toLowerCase()} at ${u.zoneName} is sorted`
+      : u.update === 'answer' ? `${u.volunteerName} answered your question about the ${u.typeLabel.toLowerCase()}`
       : `${u.volunteerName} sent an update from ${u.zoneName}`,
       u.update === 'need_help' ? 'fire' : u.update === 'sorted' ? 'medical' : 'media');
+  });
+  // News about a possible match between a missing and a found person: new, checking, confirmed, reunited.
+  socket.on('match:event', m => {
+    FD.beep(m.tone === 'good' ? 2 : 3);
+    showBanner(m.text, m.tone === 'good' ? 'medical' : 'found_person');
   });
   socket.on('media:new', m => {
     FD.beep(1);
@@ -122,8 +128,8 @@
 
   function showBanner(text, type) {
     banner.textContent = text;
-    banner.style.background = type === 'media' ? 'var(--ink)'
-      : `var(--${type === 'overcrowding' ? 'crowd' : type}-strong)`; // darker shade keeps white text AA
+    const colour = { overcrowding: 'crowd', lost_person: 'missing', missing_person: 'missing', found_person: 'found' }[type] || type;
+    banner.style.background = type === 'media' ? 'var(--ink)' : `var(--${colour}-strong)`; // darker shade keeps white text AA
     banner.classList.add('show');
     clearTimeout(showBanner.t);
     showBanner.t = setTimeout(() => banner.classList.remove('show'), 4000);
@@ -238,12 +244,200 @@
           ${rec ? `<p class="insight">${esc(rec.insight)}</p>` : '<p class="insight pending">AI is reading the report…</p>'}
           ${facts.length ? `<ul class="facts">${facts.map(([t, c]) => `<li class="${c}">${esc(t)}</li>`).join('')}</ul>` : ''}
           ${!i.snapshot && i.camera ? `<p class="small">${cameraLine(i)}</p>` : ''}
+          ${personCard(i)}
           ${raisedBy}
           ${i.mediaObservations ? `<p class="media-obs">From photos and videos: ${esc(i.mediaObservations)}</p>` : ''}
           ${i.reclassifiedFrom ? `<p class="small muted">Reported as ${esc(i.reclassifiedFrom.toLowerCase())}. AI: ${esc(i.classificationReason || '')}</p>`
             : i.type === 'other' && i.classificationReason ? `<p class="small muted">AI: ${esc(i.classificationReason)}</p>` : ''}
         </div>
       </div>`;
+  }
+
+  // ---------- Missing and found people ----------
+  const isPerson = i => ['lost_person', 'missing_person', 'found_person'].includes(i.type);
+  const AGE = { child: 'Child', teen: 'Teenager', adult: 'Adult', older_adult: 'Older adult' };
+  const NEED = {
+    confused_or_dementia: 'Confused or dementia', medical_need: 'Medical need', disability: 'Disability',
+    limited_english: 'Limited English', intoxicated: 'Intoxicated', distressed: 'Distressed',
+  };
+  const URGENT_NEED = ['confused_or_dementia', 'medical_need', 'disability'];
+  const meetName = () => config.zones[config.meetingZoneId]?.name || 'meeting point';
+
+  // Who the AI understands the person to be, from the reports: what volunteers look for, and what's compared.
+  function personCard(i) {
+    if (!isPerson(i)) return '';
+    const p = i.person;
+    if (!p) return '<div class="person-card"><p class="small muted">AI is reading who they are…</p></div>';
+    const missing = i.type === 'missing_person';
+    const chips = [
+      AGE[p.ageGroup] && [`${AGE[p.ageGroup]}${p.age ? `, ${p.age}` : ''}`, p.ageGroup === 'child' ? 'alarm' : ''],
+      ...p.needs.filter(n => NEED[n]).map(n => [NEED[n], URGENT_NEED.includes(n) ? 'alarm' : '']),
+      p.source === 'ai' && (p.canDecide ? ['Can decide for themselves', 'calm'] : p.ageGroup !== 'child' && ['Can’t decide for themselves', 'alarm']),
+    ].filter(Boolean);
+    const rows = [
+      p.looks && ['Looks', p.looks],
+      p.lastSeen && [missing ? 'Last seen' : 'Found', p.lastSeen],
+      p.companion && [missing ? 'Looking' : 'Came with', p.companion],
+      p.hasPhone !== 'unknown' && ['Phone', p.hasPhone === 'yes' ? 'Has a phone' : 'No phone'],
+    ].filter(Boolean);
+    return `
+      <div class="person-card">
+        <p class="person-line">${esc(p.summary || i.typeLabel)}</p>
+        ${chips.length ? `<ul class="chips">${chips.map(([t, c]) => `<li class="${c}">${esc(t)}</li>`).join('')}</ul>` : ''}
+        ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}
+      </div>`;
+  }
+
+  // A possible match lives on both cards: in full on the found person's (where the checking happens), and as a
+  // pointer on the missing person's. Every button says exactly who will be asked to do what.
+  const CHECK = {
+    photo_of_found: { label: m => `Ask ${m.finderName} for a photo to show the family`, short: 'a photo of them, shown to the family' },
+    photo_of_family: { label: m => `Ask ${m.searcherName} for a photo of the family to show them`, short: 'a photo of the family, shown to them' },
+    ask_person: { label: m => `Ask ${m.finderName} to ask them if they want to meet`, short: 'asking them, their choice' },
+  };
+  const GOOD = ['confirmed', 'meeting', 'declined'];
+  const act = (m, action, label, cls = 'link-button', extra = '') =>
+    `<button class="${cls}" data-match-act="${action}" data-match-id="${esc(m.id)}" ${extra}>${label}</button>`;
+
+  function matchPanel(i) {
+    const m = i.match;
+    if (!m || m.status === 'cancelled') return '';
+    const missing = incidents.get(m.missingId), found = incidents.get(m.foundId);
+    if (!missing || !found) return '';
+    const p = missing.person || {}, f = found.person || {};
+    const who = p.name || f.name || (found.typeLabel === 'Found child' ? 'the child' : 'them');
+    const looker = p.companion || 'the family';
+    const good = GOOD.includes(m.status);
+
+    if (i.type === 'missing_person') {
+      if (m.status === 'rejected') return `<p class="match-note bad" style="margin: 0 0 1rem;">Checked a possible match: not ${esc(who)}. Still looking.</p>`;
+      const text = {
+        suggested: `Possible match: the ${found.typeLabel.toLowerCase()} with ${m.finderName} at ${found.zoneName}`,
+        checking: `Checking a possible match with ${m.finderName} at ${found.zoneName}`,
+        confirmed: `Found: ${who} is with ${m.finderName} at ${found.zoneName}`,
+        meeting: `Reuniting at the ${meetName()}`,
+        declined: `${cap(who)} is safe, and chose not to meet`,
+      }[m.status] || '';
+      return `<div class="match-mini ${good ? 'good' : ''}"><p>${esc(text)}</p><button class="secondary" data-jump="${esc(found.id)}">Open match</button></div>`;
+    }
+    if (m.status === 'rejected') return `<p class="match-note bad" style="margin: 0 0 1rem;">Not the missing ${esc(who === 'them' ? 'person' : who)} (${esc(m.note || '')}). Still looking for their people.</p>`;
+
+    const side = (kind, label, inc, person, where) => `
+      <div class="match-side ${kind}">
+        <p class="side-label">${label}</p>
+        <p class="side-line">${esc(person.summary || inc.typeLabel)}</p>
+        ${person.looks ? `<p>${esc(person.looks)}</p>` : ''}
+        <p class="muted">${esc(where)}</p>
+      </div>`;
+    const title = {
+      suggested: 'Possible match', checking: 'Checking the match', confirmed: `Confirmed: it’s ${who}`,
+      meeting: `Reuniting at the ${meetName()}`, declined: `${cap(who)} is safe`,
+    }[m.status] || 'Match';
+
+    // What the check is waiting for, step by step.
+    let progress = '';
+    if (m.status === 'checking') {
+      const steps = m.method === 'photo_of_found' ? [[`${m.finderName} takes a photo of them`, !!m.photo], [`${m.searcherName} shows it to ${looker}`, false]]
+        : m.method === 'photo_of_family' ? [[`${m.searcherName} takes a photo of ${looker}`, !!m.photo], [`${m.finderName} asks if they recognise them`, false]]
+        : [[`${m.finderName} asks them their name and if they want to meet`, false]];
+      const now = steps.findIndex(([, done]) => !done);
+      progress = `<ol class="match-progress">${steps.map(([t, done], n) => `<li class="${done ? 'done' : n === now ? 'now' : ''}">${esc(t)}</li>`).join('')}</ol>`;
+    }
+    const photo = m.photo ? `
+      <figure class="match-photo">
+        <button class="media-photo" data-media-photo="${esc(m.photo.url)}" data-by="${esc(m.photo.by)}" aria-label="Enlarge photo of ${esc(m.photo.of)}"><img src="${esc(m.photo.url)}" alt="Photo of ${esc(m.photo.of)}"></button>
+        <figcaption>Photo of ${esc(m.photo.of)} by ${esc(m.photo.by)}. Seen only by the two volunteers and you; deleted on close.</figcaption>
+      </figure>` : '';
+    const note = m.status === 'declined' ? `<p class="match-note good">${esc(m.note)}. Never share where they are.</p>`
+      : m.note ? `<p class="match-note ${good ? 'good' : 'bad'}">${esc(m.note)}</p>` : '';
+
+    let actions = '';
+    const others = method => CHECKS_ORDER.filter(c => c !== method)
+      .map(c => act(m, 'check', `Or: ${CHECK[c].short}`, 'link-button', `data-method="${c}"`)).join('');
+    const handBack = `${act(m, 'confirm', 'Confirmed another way')}${act(m, 'reject', 'Not a match', 'link-button bad', `data-confirm="${esc(`Mark this as not ${who}? Both volunteers are told and the search goes on.`)}"`)}`;
+    if (m.status === 'suggested') {
+      actions = `
+        ${act(m, 'check', `${esc(CHECK[m.check].label(m))}<small>AI suggests ${esc(CHECK[m.check].short)}${m.checkWhy ? `: ${esc(m.checkWhy)}` : ''}</small>`, 'check-main', `data-method="${m.check}"`)}
+        <div class="match-alt">${others(m.check)}${handBack}</div>`;
+    } else if (m.status === 'checking') {
+      actions = `<div class="match-alt">${others(m.method)}${handBack}</div>`;
+    } else if (m.status === 'confirmed') {
+      const minor = (p.needs || []).includes('minor') || (f.needs || []).includes('minor');
+      actions = `
+        ${act(m, 'meet', `Send ${esc(m.finderName)} and ${esc(m.searcherName)} to the ${esc(meetName())}`, 'go')}
+        <p class="small muted">${minor ? 'Security checks the guardian’s ID before the hand-over.' : 'They meet at the meeting point, in their own way.'}</p>`;
+    } else if (m.status === 'meeting') {
+      const where = [found, missing].flatMap(x => x.assignments || []).map(a => `${a.name} ${assignmentLabel[a.status] || a.status}`);
+      actions = `
+        ${where.length ? `<p class="small">${esc(where.join(', '))}</p>` : ''}
+        ${m.reunitedBy ? `<p class="match-note good">${esc(m.reunitedBy)} says they’re reunited</p>` : ''}
+        ${act(m, 'finish', 'Mark reunited and close both', 'go')}`;
+    } else if (m.status === 'declined') {
+      actions = act(m, 'finish', 'Close both reports', 'go');
+    }
+
+    return `
+      <section class="match ${good ? 'good' : ''}" aria-label="Possible match">
+        <header class="match-head">
+          <h3>${esc(title)}</h3>
+          ${m.confidence != null && !good ? `<span class="match-score">${m.confidence}%<small> likely, AI</small></span>` : ''}
+        </header>
+        <div class="match-body">
+          <div class="match-pair">
+            ${side('missing', 'Being looked for', missing, p, `${p.companion ? `${cap(p.companion)}, with` : 'With'} ${m.searcherName} at ${missing.zoneName}`)}
+            ${side('found', 'Found', found, f, `With ${m.finderName} at ${found.zoneName}`)}
+          </div>
+          ${!good && (m.agree.length || m.differ.length) ? `
+            <div class="match-why">
+              <ul class="agree">${m.agree.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+              <ul class="differ">${m.differ.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+            </div>` : ''}
+          ${!good && m.summary ? `<p class="match-summary">${esc(m.summary)}</p>` : ''}
+          ${progress}
+          ${photo}
+          ${note}
+          <div class="match-actions">${actions}</div>
+          ${!good ? '<p class="ai-note">Suggested by AI. A person always checks before anyone is brought together.</p>' : ''}
+        </div>
+      </section>`;
+  }
+  const CHECKS_ORDER = ['photo_of_found', 'photo_of_family', 'ask_person'];
+
+  // ---------- Asking a volunteer for more ----------
+  // Goes to whoever reported it (or someone sent to it). Their answer comes back on this same card, and the AI
+  // re-reads the incident with it. The AI suggests the question that would most change the response.
+  const askDrafts = new Map(); // incidentId -> what the coordinator is typing
+  function askBox(i) {
+    const real = id => volunteers.some(v => v.id === id && !v.simulated);
+    const to = (i.reports || []).find(r => real(r.volunteerId))?.volunteerName || (i.assignments || []).find(a => real(a.volunteerId))?.name;
+    if (!to) return '';
+    const questions = i.questions || [];
+    const waiting = questions.filter(q => !q.answeredAt).at(-1);
+    const suggestion = i.recommendation?.askReporter;
+    const fresh = suggestion && !questions.some(q => q.text === suggestion) ? suggestion : '';
+    const drafting = askDrafts.has(i.id);
+    const value = drafting ? askDrafts.get(i.id) : fresh;
+    return `
+      <div class="ask ${fresh && !drafting ? 'suggested' : ''}">
+        ${waiting ? `<p class="ask-waiting">Waiting for ${esc(waiting.toName)} to answer: “${esc(waiting.text)}”</p>` : ''}
+        <label class="ask-label" for="ask-${i.id}">${fresh && !drafting ? `AI suggests asking ${esc(to)}` : `Ask ${esc(to)} for more detail`}</label>
+        <div class="ask-row">
+          <input type="text" id="ask-${i.id}" data-ask-input="${i.id}" value="${esc(value)}" placeholder="e.g. What are they wearing?" autocomplete="off">
+          <button class="secondary" data-ask="${i.id}">Ask ${esc(to)}</button>
+        </div>
+      </div>`;
+  }
+  function sendAsk(id) {
+    const input = document.querySelector(`[data-ask-input="${CSS.escape(id)}"]`);
+    const text = input?.value.trim();
+    if (!text) { input?.focus(); return; }
+    socket.emit('incident:ask', { incidentId: id, text }, res => {
+      if (res?.error) return showBanner(res.error, 'other');
+      askDrafts.delete(id);
+      showBanner(res.delivered ? `Asked ${res.to}` : `Asked ${res.to}, but their phone isn’t connected. Use the radio.`, res.delivered ? 'media' : 'medical');
+      render();
+    });
+    input.blur();
   }
 
   // ---------- Response track: reported, sent, on the way, arrived, sorted ----------
@@ -256,7 +450,7 @@
       ['Sent', a.length > 0],
       ['On the way', a.some(x => x.status === 'accepted' || x.status === 'arrived')],
       ['Arrived', a.some(x => x.status === 'arrived')],
-      ['Sorted', latestReply(i)?.update === 'sorted'],
+      [i.match?.status === 'meeting' ? 'Reunited' : 'Sorted', latestReply(i)?.update === 'sorted'],
     ];
     const next = stages.findIndex(([, done]) => !done);
     return `<ol class="track-line" aria-label="Response progress">${stages.map(([label, done], n) =>
@@ -264,13 +458,14 @@
   }
 
   // The newest reply from a volunteer on the job, right under the track: it's what the next decision hangs on.
-  const REPLY = { sorted: 'says it’s sorted', need_help: 'needs more help', update: 'sent an update' };
+  const REPLY = { sorted: 'says it’s sorted', need_help: 'needs more help', update: 'sent an update', answer: 'answered your question' };
   function reply(i) {
     const r = latestReply(i);
     if (!r) return '';
     return `
       <div class="reply ${r.update}" role="note">
         <p><strong>${esc(r.volunteerName)}</strong> ${REPLY[r.update]} <span class="muted">at ${clock(r.ts)}</span></p>
+        ${r.answerTo ? `<p class="small muted">You asked: “${esc(r.answerTo)}”</p>` : ''}
         ${reportBody(i, r)}
       </div>`;
   }
@@ -316,6 +511,13 @@
       if (!done) detail = count ? `${count} with the app open` : 'Nobody there has the app open';
       message = e.text;
       if (editing) editor = `<textarea rows="3" aria-label="Message to the zone" ${field('text')}>${esc(e.text)}</textarea>`;
+    } else if (a.kind === 'alert_zones') {
+      const where = names(e.zoneIds.map(zoneName));
+      const count = volunteers.filter(v => v.online && e.zoneIds.includes(v.zoneId) && !(i.reports || []).some(r => r.volunteerId === v.id)).length;
+      title = done ? `Lookout sent to volunteers at ${esc(where)}` : `Alert volunteers at ${esc(where)}`;
+      if (!done) detail = count ? `${count} with the app open` : 'Nobody there has the app open';
+      message = e.text;
+      if (editing) editor = `<textarea rows="3" aria-label="Lookout message" ${field('text')}>${esc(e.text)}</textarea>`;
     } else if (a.kind === 'dismiss') {
       title = done ? 'Marked as a false alarm' : 'Mark it a false alarm';
       detail = done ? '' : esc(a.why);
@@ -324,7 +526,7 @@
       detail = done ? '' : esc(a.why);
     } else if (a.kind === 'open_incident') {
       title = done ? `Opened a ${esc(typeLabel(e.type).toLowerCase())} incident`
-        : `Open a <select class="inline-select" aria-label="Incident type" ${field('type')}>${Object.entries(config.incidentTypes).filter(([t]) => t !== i.type).map(([t, d]) => `<option value="${t}" ${t === e.type ? 'selected' : ''}>${esc(d.label.toLowerCase())}</option>`).join('')}</select> incident here`;
+        : `Open a <select class="inline-select" aria-label="Incident type" ${field('type')}>${Object.entries(config.incidentTypes).filter(([t]) => t !== i.type && !isPerson({ type: t })).map(([t, d]) => `<option value="${t}" ${t === e.type ? 'selected' : ''}>${esc(d.label.toLowerCase())}</option>`).join('')}</select> incident here`;
       message = e.note;
       if (editing) editor = `<textarea rows="2" aria-label="What the new incident is" ${field('note')}>${esc(e.note)}</textarea>`;
     }
@@ -481,6 +683,7 @@
         <ol class="track">${followUps.map(f => `
           <li>
             <p class="small"><span class="muted">${clock(f.ts)}</span> <strong>${esc(f.r.volunteerName)}</strong> ${f.what}</p>
+            ${!f.m && f.r.answerTo ? `<p class="small muted">You asked: “${esc(f.r.answerTo)}”</p>` : ''}
             ${f.m ? mediaBody(f.m, f.r) : reportBody(i, f.r)}
           </li>`).join('')}
         </ol>
@@ -500,8 +703,10 @@
         </header>
         <p class="inc-meta"><span class="priority p${i.priority}">${PRIORITY[i.priority] || ''}.</span> ${esc(meta)}</p>
         ${track(i)}
+        ${matchPanel(i)}
         ${reply(i)}
         ${read(i)}
+        ${askBox(i)}
         ${decision(i)}
         ${team}
         ${followUp}
@@ -597,7 +802,7 @@
   // ---------- Rendering ----------
   // Only the visible tab is built. Cards aren't rebuilt while the coordinator is typing or choosing in one.
   let renderPending = false;
-  const busyEditing = () => !!document.activeElement?.closest?.('#incidents textarea, #incidents select');
+  const busyEditing = () => !!document.activeElement?.closest?.('#incidents textarea, #incidents select, #incidents input[type=text]');
   function render() {
     if (!config) return;
     if (busyEditing()) { renderPending = true; return; }
@@ -640,6 +845,10 @@
     conditions.textContent = config.conditions || 'No conditions set.';
   }
   const incidentsEl = document.getElementById('incidents');
+  incidentsEl.addEventListener('keydown', e => {
+    const ask = e.target.closest('[data-ask-input]');
+    if (ask && e.key === 'Enter') { e.preventDefault(); sendAsk(ask.dataset.askInput); }
+  });
   incidentsEl.addEventListener('focusout', () => setTimeout(() => { if (renderPending) render(); }, 0));
 
   // ---------- Running the plan ----------
@@ -677,6 +886,8 @@
     render();
   });
   incidentsEl.addEventListener('input', e => {
+    const ask = e.target.closest('[data-ask-input]');
+    if (ask) { askDrafts.set(ask.dataset.askInput, ask.value); return; }
     const f = e.target.closest('textarea[data-field]');
     if (!f) return;
     const i = incidents.get(f.dataset.incident);
@@ -741,6 +952,24 @@
       navigator.clipboard?.writeText(noteText(i)).then(
         () => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy note'; }, 1500); },
         () => showBanner('Copying isn’t allowed here. Select the note text instead.', 'other'));
+    }
+
+    const askBtn = e.target.closest('[data-ask]');
+    if (askBtn) sendAsk(askBtn.dataset.ask);
+    const ma = e.target.closest('[data-match-act]');
+    if (ma && (!ma.dataset.confirm || confirm(ma.dataset.confirm))) {
+      ma.disabled = true;
+      socket.emit('match:action', { matchId: ma.dataset.matchId, action: ma.dataset.matchAct, method: ma.dataset.method }, res => {
+        ma.disabled = false;
+        if (res?.error) showBanner(res.error, 'other');
+        else if (res?.delivered === false) showBanner(`${res.by}’s phone isn’t connected. Use the radio.`, 'medical');
+      });
+    }
+    const jump = e.target.closest('[data-jump]');
+    if (jump) {
+      const card = document.querySelector(`article[data-id="${CSS.escape(jump.dataset.jump)}"]`);
+      card?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      card?.classList.add('flash');
     }
 
     const s = e.target.closest('[data-snapshot]');

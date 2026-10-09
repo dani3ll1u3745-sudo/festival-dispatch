@@ -9,7 +9,7 @@ const URL = process.env.URL || 'http://localhost:3000';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
-  const coordinator = io(URL), volunteer = io(URL), camera = io(URL);
+  const coordinator = io(URL, { query: { view: 'coordinator' } }), volunteer = io(URL), camera = io(URL);
   const incidents = new Map();
   const volunteerEvents = []; // ordered log of what the volunteer phone received
   let assignment = null;

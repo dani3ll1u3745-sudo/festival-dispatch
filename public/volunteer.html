@@ -74,6 +74,8 @@
       <h2>Join the volunteer team</h2>
       <label for="volName" class="muted small">Your name</label>
       <input type="text" id="volName" autocomplete="given-name" placeholder="First name">
+      <label for="volPost" class="muted small" style="display: block; margin-top: .75rem;">Where are you posted?</label>
+      <select id="volPost" class="field"><option value="">Wherever I'm needed</option></select>
       <h3 style="margin-top: 1rem;">What are you trained in?</h3>
       <div id="quals"></div>
       <button class="full" id="joinBtn" style="margin-top: 1rem;">Join and turn on alerts</button>
@@ -83,6 +85,23 @@
 
   <!-- On shift -->
   <section id="shiftView" hidden>
+    <!-- A check from the coordinator about a missing or found person: take a photo, answer a question, or news -->
+    <div class="task-card" id="taskCard" role="alert" hidden>
+      <p class="task-kicker" id="taskKicker"></p>
+      <h2 id="taskTitle"></h2>
+      <p class="task-text" id="taskText"></p>
+      <figure class="task-photo" id="taskPhotoWrap" hidden><img id="taskPhoto" alt=""><figcaption id="taskPhotoCaption"></figcaption></figure>
+      <figure class="task-photo ref" id="taskRefWrap" hidden><img id="taskRef" alt=""><figcaption id="taskRefCaption"></figcaption></figure>
+      <button class="full task-main" id="taskPhotoBtn" type="button" hidden>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        Take photo
+      </button>
+      <input type="file" id="taskPhotoInput" accept="image/*" capture="environment" hidden>
+      <div class="task-answers" id="taskAnswers"></div>
+      <p class="task-status" id="taskStatus" role="status"></p>
+      <button class="secondary full" id="taskOk" type="button" hidden>Got it</button>
+    </div>
+
     <div class="vol-who">
       <p class="who-name" id="hello"></p>
       <p class="slate" id="post"></p>
@@ -91,13 +110,22 @@
       <!-- Message from the coordinator to everyone in this volunteer's zone -->
       <div class="zone-msg" id="zoneMsg" role="alert" hidden>
         <p class="small slate" id="zoneMsgFrom"></p>
+        <p class="zone-msg-title" id="zoneMsgTitle" hidden></p>
         <p class="zone-msg-text" id="zoneMsgText"></p>
-        <button class="secondary" id="zoneMsgOk">Got it</button>
+        <div class="row">
+          <button class="found-it" id="zoneMsgFound" hidden>I’ve found them</button>
+          <button class="secondary" id="zoneMsgOk">Got it</button>
+        </div>
       </div>
     </div>
 
     <!-- Report stage -->
     <div class="stage">
+      <!-- When the stage adds to an incident instead of reporting a new one: the coordinator's question, or your own report -->
+      <div class="stage-target" id="stageTarget" hidden>
+        <p class="stage-target-kicker" id="targetKicker"></p>
+        <p class="stage-target-text" id="targetText"></p>
+      </div>
       <button class="mic" id="micBtn" type="button" aria-label="Start voice input" aria-pressed="false">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
       </button>
@@ -114,13 +142,19 @@
         <button class="report fire" data-report="fire">Report fire</button>
         <button class="report medical" data-report="medical">Report medical</button>
         <button class="report overcrowding" data-report="overcrowding">Report crowding</button>
+        <button class="report lost_person" data-report="lost_person">Report someone lost</button>
         <button class="report other" data-report="other">Report other</button>
       </div>
+      <!-- Open the page with ?demo to fill the box with a sample report in one tap -->
+      <div class="samples" id="samples" hidden></div>
       <!-- While on a job, the same stage replies to the coordinator about it -->
       <div class="report-grid" id="updateGrid" hidden>
         <button class="report sorted" data-update="sorted">Sorted</button>
         <button class="report need-help" data-update="need_help">Need more help</button>
         <button class="report send-update" data-update="update">Send update</button>
+      </div>
+      <div class="report-grid" id="addGrid" hidden>
+        <button class="report send-update" id="addSendBtn" type="button">Send answer</button>
       </div>
       <button class="link-button slate-link" id="switchStageBtn" type="button" hidden></button>
       <p class="report-status" id="reportStatus" role="status"></p>
@@ -137,6 +171,7 @@
         <p class="small" id="latestVoice" hidden>Voice clip sent</p>
         <p class="latest-status" id="latestStatus" role="status"></p>
         <div class="media-grid" id="latestMedia"></div>
+        <button class="secondary full" id="addDetailBtn" type="button" style="margin-top: .75rem;">Add more detail</button>
         <button class="add-media full" id="addMediaBtn" type="button">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
           Add photo or video
@@ -162,8 +197,11 @@
   let me = null;
   let assignment = null;
 
-  const storedId = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
-  const storeId = id => { try { id ? localStorage.setItem(STORAGE_KEY, id) : localStorage.removeItem(STORAGE_KEY); } catch {} };
+  // In a demo (?demo) several volunteers often share one laptop, so each tab keeps its own identity.
+  const DEMO = new URLSearchParams(location.search).has('demo');
+  const store = () => (DEMO ? sessionStorage : localStorage);
+  const storedId = () => { try { return store().getItem(STORAGE_KEY); } catch { return null; } };
+  const storeId = id => { try { id ? store().setItem(STORAGE_KEY, id) : store().removeItem(STORAGE_KEY); } catch {} };
 
   socket.on('connect', () => {
     dot.classList.add('on'); conn.textContent = 'Connected';
@@ -171,7 +209,7 @@
     if (!id) return;
     // Reconnect after a locked screen or reload: the server re-links this phone.
     socket.emit('volunteer:hello', { id }, ({ volunteer }) => {
-      if (!volunteer) { storeId(null); me = null; setLatest(null); showJoin(); return; } // server was restarted
+      if (!volunteer) { storeId(null); me = null; setLatest(null); showTask(null); target = null; setStageMode(); showJoin(); return; } // server was restarted
       const firstLoad = !me;
       me = volunteer;
       showShift();
@@ -188,19 +226,37 @@
     quals.innerHTML = Object.entries(config.qualifications).map(([k, label]) =>
       `<label class="check"><input type="checkbox" value="${k}"> ${FD.esc(label)}</label>`).join('') +
       '<label class="check"><input type="checkbox" data-none> None yet</label>'; // UI-only, never sent
+    volPost.innerHTML = '<option value="">Wherever I’m needed</option>' + Object.entries(config.zones)
+      .map(([id, z]) => `<option value="${id}">${FD.esc(z.name)}</option>`).join('');
     if (!storedId()) showJoin();
   });
 
   socket.on('transcription:ready', () => { if (config) { config.transcriptionEnabled = true; updateStageHint(); } });
   socket.on('assignment', a => showAlert(a, true));
+  // A lookout asks everyone in these zones to watch for a missing person; a stand-down says they've been found.
   socket.on('zone:message', m => {
     zoneMsgFrom.textContent = `Coordinator to everyone at ${m.zoneName}, ${new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    zoneMsgTitle.hidden = !(m.lookout || m.standDown);
+    zoneMsgTitle.textContent = m.lookout ? 'Look out for this person' : m.standDown ? 'Search over' : '';
     zoneMsgText.textContent = m.text;
+    zoneMsgFound.hidden = !m.lookout;
     zoneMsg.className = `zone-msg ${m.type || ''}`;
     zoneMsg.hidden = false;
-    FD.beep(2);
+    if (m.lookout) zoneMsg.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    FD.beep(m.lookout ? 3 : 2);
   });
   zoneMsgOk.onclick = () => { zoneMsg.hidden = true; };
+  // Seen them: straight to a found-person report, with the button to send it pointed out.
+  zoneMsgFound.onclick = () => {
+    zoneMsg.hidden = true;
+    if (assignment || target) { reportOther = true; setStageMode(); }
+    const btn = document.querySelector('[data-report="lost_person"]');
+    document.querySelector('.stage').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    note.placeholder = 'Where are they, how are they, and what do they say their name is?';
+    note.focus({ preventScroll: true });
+    btn.classList.add('pulse');
+    setTimeout(() => btn.classList.remove('pulse'), 5000);
+  };
   socket.on('assignment:cancelled', ({ resolved, reassigned, standDown, falseAlarm }) => {
     assignment = null;
     reportOther = false;
@@ -225,7 +281,7 @@
     FD.unlockAudio(); // this tap is what allows alert sounds later
     const qualifications = [...quals.querySelectorAll('input:checked:not([data-none])')].map(i => i.value);
     joinBtn.disabled = true;
-    socket.emit('volunteer:join', { name: volName.value.trim() || 'Volunteer', qualifications }, ({ volunteer }) => {
+    socket.emit('volunteer:join', { name: volName.value.trim() || 'Volunteer', qualifications, zoneId: volPost.value || null }, ({ volunteer }) => {
       me = volunteer; storeId(me.id); showShift(); joinBtn.disabled = false;
     });
   };
@@ -245,6 +301,8 @@
     socket.emit('volunteer:leave', { id: me.id });
     storeId(null);
     setLatest(null);
+    showTask(null);
+    target = null;
     me = null; assignment = null;
     reportOther = false;
     setStageMode();
@@ -282,6 +340,7 @@
     alertSite.textContent = a.siteNotes || '';
     alertEl.querySelector('.alert-sheet').scrollTop = 0;
     directionsBtn.href = a.directionsUrl;
+    sortedBtn.textContent = a.reunion ? 'Reunited' : 'Sorted'; // a reunion is done when they've met
     if (isNew) reportOther = false; // a new job: the stage replies about it
     updateAlertStatus();
     if (isNew) FD.beep(4);
@@ -296,7 +355,8 @@
     if (!assignment) return;
     const a = assignment, s = a.status, arrived = s === 'arrived';
     const n = stageOf(a);
-    alertTrack.innerHTML = STAGES.map((label, k) =>
+    const stages = a.reunion ? [...STAGES.slice(0, 3), 'Reunited'] : STAGES;
+    alertTrack.innerHTML = stages.map((label, k) =>
       `<li class="${k <= n ? 'done' : k === n + 1 ? 'next' : ''}">${label}${k <= n ? '<span class="visually-hidden">, done</span>' : ''}</li>`).join('');
     acceptBtn.hidden = s === 'accepted' || arrived;
     arrivedBtn.hidden = s !== 'accepted';
@@ -338,16 +398,35 @@
   showAssignment.onclick = () => assignment && showAlert(assignment, false);
 
   // ---- The report stage: reports a new incident, or, while on a job, replies to the coordinator about it ----
-  let reportOther = false; // on a job but reporting something else instead
-  const replying = () => !!assignment && !reportOther;
+  let reportOther = false; // answering, or on a job, but reporting something else instead
+  // What the stage adds to instead of reporting something new: the coordinator's question about an incident
+  // ({ incidentId, typeLabel, zoneName, questionId, question }), or the volunteer's own report (no question).
+  let target = null;
+  const stageMode = () => reportOther ? 'report' : target ? 'add' : assignment ? 'reply' : 'report';
+  const replying = () => stageMode() === 'reply';
   function setStageMode() {
-    const r = replying();
-    reportGrid.hidden = r;
+    const m = stageMode();
+    addGrid.hidden = m !== 'add';
+    stageTarget.hidden = m !== 'add';
+    if (m === 'add') {
+      const q = target.question;
+      stageTarget.classList.toggle('question', !!q);
+      targetKicker.textContent = q ? `The coordinator asks about the ${target.typeLabel.toLowerCase()} at ${target.zoneName}`
+        : `Adding to your report: ${target.typeLabel.toLowerCase()} at ${target.zoneName}`;
+      targetText.textContent = q || 'What’s new? It goes on the same report, not a new one.';
+      addSendBtn.textContent = q ? 'Send answer' : 'Add to my report';
+    }
+    const r = m === 'reply';
+    reportGrid.hidden = m !== 'report';
     updateGrid.hidden = !r;
-    switchStageBtn.hidden = !assignment;
-    switchStageBtn.textContent = r ? 'Report a different incident instead' : `Back to updating the coordinator on the ${assignment?.typeLabel.toLowerCase() || 'job'}`;
-    note.placeholder = r ? 'Type an update (optional if you recorded)' : 'Type what\u2019s happening (optional if you recorded)';
+    switchStageBtn.hidden = !assignment && !target;
+    switchStageBtn.textContent = m !== 'report' ? 'Report something new instead'
+      : target ? (target.question ? 'Back to answering the coordinator' : 'Back to adding to your report')
+      : `Back to updating the coordinator on the ${assignment?.typeLabel.toLowerCase() || 'job'}`;
+    note.placeholder = m === 'add' ? (target.question ? 'Type your answer (optional if you recorded)' : 'Type what to add (optional if you recorded)')
+      : r ? 'Type an update (optional if you recorded)' : 'Type what\u2019s happening (optional if you recorded)';
     if (!micBtn.classList.contains('recording')) setListening(false);
+    renderSamples(); // demo chips that fit what the stage is doing
   }
   switchStageBtn.onclick = () => { reportOther = !reportOther; setStageMode(); };
 
@@ -376,7 +455,9 @@
     micBtn.classList.toggle('recording', on);
     micBtn.setAttribute('aria-label', on ? 'Stop voice input' : 'Start voice input');
     micBtn.setAttribute('aria-pressed', String(on));
-    listening.textContent = !on ? (replying() ? 'Tap to tell the coordinator how it’s going' : 'Tap to describe what’s happening')
+    const m = stageMode();
+    listening.textContent = !on ? (m === 'add' ? (target.question ? 'Tap to answer by voice' : 'Tap to add by voice')
+      : m === 'reply' ? 'Tap to tell the coordinator how it’s going' : 'Tap to describe what’s happening')
       : s?.recorder ? `Recording ${fmtTime((Date.now() - s.startedAt) / 1000)}. Tap to stop.` : 'Listening… Tap to stop.';
   }
 
@@ -583,14 +664,43 @@
       storeReport(res?.reportId || reportId); // its details arrive in 'report:status'
       if (res?.audioError) reportStatus.textContent = `Sent to the coordinator, but the voice clip wasn’t attached (${res.audioError}).`;
     });
-    reportStatus.textContent = fields.updateFor ? 'Update sent to the coordinator.' : 'Sent to the coordinator.';
+    reportStatus.textContent = fields.update === 'answer' ? 'Answer sent to the coordinator.'
+      : fields.updateFor ? 'Update sent to the coordinator.' : 'Sent to the coordinator.';
     note.value = '';
+    setStageMode(); // puts back the usual placeholder
     if (pending === voice) clearPending({ sent: true });
     if (payload.transcriptPending) sendLateTranscript(reportId, speech);
     return true;
   }
+  // These need words: the button alone doesn't say what's happening, or who to look for.
+  const NEEDS_WORDS = {
+    other: 'Type what’s happening or record a voice clip.',
+    lost_person: 'Say or type who’s lost: whether someone is looking for them or they’re with you, what they look like, and where.',
+  };
   document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () =>
-    send({ type: b.dataset.report }, { needsWords: b.dataset.report === 'other', missing: 'Type what’s happening or record a voice clip.' })));
+    send({ type: b.dataset.report }, { needsWords: b.dataset.report in NEEDS_WORDS, missing: NEEDS_WORDS[b.dataset.report] })));
+
+  // Demo helper (open the page with ?demo): one tap fills the box with a sample report, ready to send.
+  const SAMPLES = [
+    ['Missing child', 'A mum here, Sarah, has lost her son Leo. He’s 5, curly brown hair, red hoodie with a dinosaur on it and blue shorts. She last saw him at the Food Court about 10 minutes ago.'],
+    ['Found child', 'Found a little boy on his own by the water station, crying. About 5, curly brown hair, grey striped T-shirt and blue shorts. He says his name is Leo and he can’t find his mum.'],
+    ['Missing friend', 'Alex has lost their friend Sam, 24, near the Main Stage about half an hour ago. Tall, black cap, green festival T-shirt. His phone is dead.'],
+    ['Found adult', 'A guy here says he’s lost his mates. Mid twenties, black cap, green T-shirt. Says his name is Sam and his phone is flat. He seems fine.'],
+  ];
+  // Answering or adding to a report gets its own sample, which fits any of the reports above.
+  const SAMPLE_ANSWER = ['Sample answer', 'She says he has a small blue backpack with a toy shark on it. No medical needs, and he knows her phone number.'];
+  function renderSamples() {
+    if (!DEMO) return;
+    const list = stageMode() === 'add' ? [SAMPLE_ANSWER] : stageMode() === 'report' ? SAMPLES : [];
+    samples.hidden = !list.length;
+    samples.innerHTML = '<span class="small slate">Demo:</span>' + list.map(([label, text]) =>
+      `<button type="button" data-sample="${FD.esc(text)}">${FD.esc(label)}</button>`).join('');
+  }
+  samples.addEventListener('click', e => {
+    const b = e.target.closest('[data-sample]');
+    if (b) { note.value = b.dataset.sample; note.focus(); }
+  });
+  renderSamples();
 
   // A reply about the current job: sorted, need more help, or an update in their own words.
   async function sendUpdate(kind) {
@@ -603,6 +713,47 @@
   }
   document.querySelectorAll('[data-update]').forEach(b => b.addEventListener('click', () => sendUpdate(b.dataset.update)));
 
+  // ---- Adding to an incident: answering the coordinator's question, or more detail on your own report ----
+  // Either way it goes on the same incident as before, so the coordinator and the AI read it as more about it.
+  let lastQuestionTs = null;
+  socket.on('question', q => {
+    if (!q) {
+      if (target?.questionId) { target = null; setStageMode(); }
+      return;
+    }
+    target = { incidentId: q.incidentId, typeLabel: q.typeLabel, zoneName: q.zoneName, questionId: q.questionId, question: q.text };
+    reportOther = false;
+    setStageMode();
+    if (q.ts === lastQuestionTs) return; // the same question again after a reconnect
+    lastQuestionTs = q.ts;
+    alertEl.classList.remove('show'); // the assignment is one tap away under "View current assignment"
+    FD.beep(3);
+    stageTarget.classList.remove('fresh');
+    void stageTarget.offsetWidth; // restart the highlight
+    stageTarget.classList.add('fresh');
+    stageTarget.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+  addSendBtn.onclick = async () => {
+    const t = target;
+    if (!t) return;
+    const sent = await send({ updateFor: t.incidentId, update: t.questionId ? 'answer' : 'update', questionId: t.questionId },
+      { needsWords: true, missing: t.question ? 'Say or type your answer first.' : 'Say or type what to add first.' });
+    if (!sent) return;
+    if (target === t) target = null;
+    setStageMode();
+  };
+  addDetailBtn.onclick = () => {
+    if (!latest) return;
+    // An open question about the same incident stays: answering it is adding to the report.
+    if (!(target?.question && target.incidentId === latest.incidentId)) {
+      target = { incidentId: latest.incidentId, typeLabel: latest.typeLabel, zoneName: latest.zoneName };
+    }
+    reportOther = false;
+    setStageMode();
+    document.querySelector('.stage').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    note.focus({ preventScroll: true });
+  };
+
   // Sends the phone's words once recognition finishes, or whatever it has heard a few seconds after stopping.
   function sendLateTranscript(reportId, speech) {
     const left = Math.max(0, TRANSCRIPT_WAIT_MS - (Date.now() - (speech.stoppedAt || Date.now())));
@@ -612,12 +763,85 @@
     });
   }
 
+  // ---- Checks from the coordinator about a missing or found person ----
+  // The server sends one task at a time: take a photo, answer a question (with a photo to show), or news.
+  // Answering or sending a photo brings the next task; news can be dismissed.
+  let task = null;
+  const TASK_KICKER = { photo: 'Photo needed', answer: 'Your answer needed', info: 'Update' };
+  socket.on('task', t => showTask(t));
+  function showTask(t) {
+    const fresh = !!t && t.ts !== task?.ts;
+    task = t;
+    taskCard.hidden = !t;
+    if (!t) return;
+    taskCard.className = `task-card ${t.tone || ''}${fresh ? ' fresh' : ''}`;
+    taskKicker.textContent = TASK_KICKER[t.kind] || '';
+    taskTitle.textContent = t.title;
+    taskText.textContent = t.text;
+    setFigure(taskPhotoWrap, taskPhoto, taskPhotoCaption, t.photoUrl, t.photoCaption);
+    setFigure(taskRefWrap, taskRef, taskRefCaption, t.refPhotoUrl, t.refCaption);
+    taskPhotoBtn.hidden = t.kind !== 'photo';
+    taskPhotoBtn.disabled = false;
+    taskAnswers.innerHTML = (t.answers || []).map(a =>
+      `<button type="button" class="ans-${FD.esc(a.style)}" data-answer="${FD.esc(a.value)}">${FD.esc(a.label)}</button>`).join('');
+    taskOk.hidden = t.kind !== 'info';
+    taskStatus.textContent = '';
+    if (fresh) {
+      FD.beep(t.kind === 'info' ? 1 : 3);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+  function setFigure(wrap, img, caption, url, text) {
+    wrap.hidden = !url;
+    if (!url) return;
+    img.onerror = () => { wrap.hidden = true; };
+    img.src = url;
+    img.alt = text || 'Photo';
+    caption.textContent = text || '';
+  }
+  taskOk.onclick = () => { socket.emit('task:dismiss'); showTask(null); };
+  taskAnswers.addEventListener('click', async e => {
+    const b = e.target.closest('[data-answer]');
+    if (!b || !task) return;
+    const buttons = [...taskAnswers.querySelectorAll('button')];
+    buttons.forEach(x => { x.disabled = true; });
+    taskStatus.textContent = 'Sending…';
+    const res = await socket.timeout(10000).emitWithAck('match:answer', { matchId: task.matchId, value: b.dataset.answer })
+      .catch(() => ({ error: 'That didn’t get through. Check your connection and try again.' }));
+    if (res?.error) {
+      taskStatus.textContent = res.error;
+      buttons.forEach(x => { x.disabled = false; });
+    }
+  });
+  taskPhotoBtn.onclick = () => taskPhotoInput.click();
+  taskPhotoInput.onchange = async () => {
+    const file = taskPhotoInput.files[0];
+    taskPhotoInput.value = '';
+    if (!file || !task || !me) return;
+    taskPhotoBtn.disabled = true;
+    taskStatus.textContent = 'Sending the photo…';
+    try {
+      const body = await photoAsJpeg(file);
+      const res = await fetch('/api/match-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-Match-Id': task.matchId, 'X-Volunteer-Id': me.id },
+        body,
+      }).catch(() => { throw new UploadError('The photo didn’t get through. Check your connection and try again.'); });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new UploadError(data.error || `Sending failed (error ${res.status}). Try again.`);
+      if (task?.kind === 'photo') taskStatus.textContent = 'Photo sent.'; // the next step usually arrives first
+    } catch (err) {
+      taskStatus.textContent = err instanceof UploadError ? err.message : 'Something went wrong. Try taking the photo again.';
+      taskPhotoBtn.disabled = false;
+    }
+  };
+
   // ---- Your latest report: where it stands, and photos or videos added to it ----
   // The server sends 'report:status' when the report changes and again after a reconnect. Updates for
   // older reports can still arrive, so only the remembered report, or a newer one, replaces what's shown.
   const LATEST_KEY = 'fd-latest-report';
-  const storedReport = () => { try { return localStorage.getItem(LATEST_KEY); } catch { return null; } };
-  const storeReport = id => { try { id ? localStorage.setItem(LATEST_KEY, id) : localStorage.removeItem(LATEST_KEY); } catch {} };
+  const storedReport = () => { try { return store().getItem(LATEST_KEY); } catch { return null; } };
+  const storeReport = id => { try { id ? store().setItem(LATEST_KEY, id) : store().removeItem(LATEST_KEY); } catch {} };
   const STATUS_TEXT = { notified: 'Coordinator notified', help_on_way: 'Help is on the way', resolved: 'Resolved' };
   const SMALL_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
   let latest = null;
@@ -627,6 +851,7 @@
     if (s.reportId !== latest?.reportId) setUpload('');
     latest = s;
     storeReport(s.reportId);
+    if (s.status === 'resolved' && target?.incidentId === s.incidentId) { target = null; setStageMode(); }
     renderLatest();
   });
 
@@ -641,7 +866,7 @@
     latestEmpty.hidden = !!latest;
     latestBody.hidden = !latest;
     if (!latest) return;
-    const UPDATE_TITLE = { sorted: 'You said it’s sorted', need_help: 'You asked for more help', update: 'Your update' };
+    const UPDATE_TITLE = { sorted: 'You said it’s sorted', need_help: 'You asked for more help', update: 'Your update', answer: 'Your answer' };
     latestTitle.textContent = latest.update ? `${UPDATE_TITLE[latest.update]}: ${latest.typeLabel.toLowerCase()} at ${latest.zoneName}` : `${latest.typeLabel} at ${latest.zoneName}`;
     latestTime.textContent = `Sent at ${new Date(latest.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     latestNote.hidden = !latest.typedNote;
@@ -650,6 +875,7 @@
     latestStatus.textContent = latest.update && latest.status !== 'resolved' ? 'Sent to the coordinator' : STATUS_TEXT[latest.status] || '';
     const resolved = latest.status === 'resolved';
     addMediaBtn.hidden = resolved;
+    addDetailBtn.hidden = resolved;
     latestResolved.hidden = !resolved;
     // Only redraw the thumbnails when they changed, so videos don't reload on every status update.
     const key = latest.media.map(m => m.mediaId).join();
@@ -657,7 +883,7 @@
     latestMedia.dataset.key = key;
     latestMedia.innerHTML = latest.media.map(m => m.kind === 'video'
       ? `<div class="media-thumb"><video src="${FD.esc(m.url)}#t=0.1" muted playsinline preload="metadata" aria-label="Video you added"></video><span class="play">${SMALL_PLAY}</span></div>`
-      : `<div class="media-thumb"><img src="${FD.esc(m.url)}" alt="Photo you added"></div>`).join('');
+      : `<div class="media-thumb"><img src="${FD.esc(m.url)}" alt="Photo you added" onerror="this.parentElement.remove()"></div>`).join(''); // photos of people are deleted on close
   }
   renderLatest();
 

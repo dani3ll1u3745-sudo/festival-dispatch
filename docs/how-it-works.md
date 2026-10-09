@@ -38,6 +38,36 @@ What the AI gets for each read, besides the incident itself:
 
 `AI_PLAN_EFFORT` in `.env` sets how hard it thinks: `medium` (default, about 15 s per plan) or `low` (about 9 s, similar advice in testing).
 
+### Asking a volunteer for more
+
+Every card raised by a volunteer has an **Ask** box. The AI fills it with the one question whose answer would most change the response. It leaves it empty when the reports already say enough or the question was already asked.
+
+The question goes to the volunteer who reported it, or else to someone sent to it. Their phone switches to answering: the question sits above the microphone, and they reply by voice or text. The answer is filed on the **same incident**, marked as the answer to that question. The AI reads it as more detail, never as a new report, and re-reads the plan. For a missing or found person it also updates the profile, so the lookout and the matching use it.
+
+A reporter can also tap **Add more detail** under their own report at any time. That is filed the same way.
+
+### Missing and found people
+
+A volunteer taps **Report someone lost** and describes what's happening. The AI first decides which side the volunteer is on: with whoever is looking (a **missing** person), or with the lost person (a **found** person). Without the AI, the wording decides. The AI then reads the words, and any photos, into a short profile:
+- name, age group and appearance;
+- where they were last seen;
+- who is looking for them, or who they came with;
+- anything that makes them vulnerable.
+
+It also decides whether they can decide for themselves. A child, or someone confused or with a medical need, is **urgent**. An adult who has lost their friends is **low priority**. The plan can **alert volunteers in several zones** to look out for them. The alert describes only how to spot them: never a photo or a surname.
+
+When a report of the other kind comes in, the AI compares the two and offers a **possible match**. It gives a likelihood, lists what agrees and what differs, and recommends a check. A person always checks before anyone moves:
+- **A photo of the found person shown to the family.** For children and anyone who can't decide for themselves.
+- **A photo of the family shown to the found person.** The reverse check.
+- **Asking the found person.** For adults, who have a right not to be found. If they'd rather not meet, the family is only told they're safe.
+
+Once confirmed:
+- volunteers who were looking get **Search over**;
+- one tap sends both volunteers to the meeting point (`meetingZoneId` in `config.json`) with hand-over rules;
+- closing both reports deletes every photo of the person.
+
+The check photo never goes to the AI and never reaches the shared roster. It is seen only by the two volunteers and the coordinator. `AI_PERSON_EFFORT` (default `low`) keeps these reads fast.
+
 ### What volunteers are told
 
 Each volunteer the plan sends gets a briefing (what and where), 2 to 4 steps on how to do the job using the site facts (which extinguisher, which exit, which technique), and a safety line on when to pull back. Only the recommended option carries AI-written steps, which keeps the plan fast; anyone sent from the other option, or by hand, gets standard steps for that type of incident. Their phone also shows the camera's photo (or the newest volunteer photo) and the zone's site notes.
@@ -94,4 +124,5 @@ Restarting the server clears all incidents and joined volunteers.
 npm run test:detection   # fire decoder and confirmation rule
 npm start                # then, in a second terminal:
 npm run test:flow        # the whole flow, without browsers
+npm run test:lost-person # a lost child matched, checked and reunited; an adult who chooses not to be found
 ```

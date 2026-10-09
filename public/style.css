@@ -472,6 +472,7 @@ body.vol .small { font-size: 15px; }
 .stage textarea { margin-top: 1.25rem; text-align: left; border-color: var(--rule); border-radius: 10px; }
 .stage .clip-row { align-self: stretch; }
 .report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; width: 100%; margin-top: 1rem; }
+#reportGrid .report:last-child:nth-child(odd) { grid-column: 1 / -1; } /* five report types: the last spans the row */
 .report, .report:hover { min-height: 56px; border-radius: 12px; font-weight: 700; border: 1px solid; }
 .report.fire { background: var(--fire-soft); border-color: var(--fire); color: var(--fire-strong); }
 .report.medical { background: var(--medical-soft); border-color: var(--medical); color: var(--medical-strong); }
@@ -502,7 +503,169 @@ button.add-media:disabled:hover { background: var(--surface); border-color: var(
 .upload-status { min-height: 1.5em; margin: .5rem 0 0; color: var(--ink); }
 .upload-status.error { color: var(--fire-strong); }
 
+/* ---------- Missing and found people ----------
+   Violet is someone being looked for, teal is someone found. A match between them uses both. */
+:root {
+  --missing: #7c3aed; --missing-soft: #f3eefe; --missing-strong: #5b21b6;
+  --found: #0f766e; --found-soft: #e5f4f2; --found-strong: #115e59;
+}
+select.field {
+  width: 100%; min-height: 44px; padding: .55rem .75rem; font: inherit;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.tag.missing_person { background: var(--missing-soft); color: var(--missing-strong); }
+.tag.found_person { background: var(--found-soft); color: var(--found-strong); }
+.incident.missing_person, .note.missing_person { border-left-color: var(--missing); }
+.incident.found_person, .note.found_person { border-left-color: var(--found); }
+.incident.missing_person .track-line { --c: var(--missing); }
+.incident.found_person .track-line { --c: var(--found); }
+.incident.missing_person .option { border-left-color: var(--missing); }
+.incident.found_person .option { border-left-color: var(--found); }
+.alert.missing_person .alert-head { background: var(--missing-strong); }
+.alert.found_person .alert-head { background: var(--found-strong); }
+.tag.lost_person { background: var(--missing-soft); color: var(--missing-strong); }
+.incident.lost_person { border-left-color: var(--missing); }
+/* One button for both sides: violet, which the report keeps if someone is missing, teal if they're found. */
+.report.lost_person { background: var(--missing-soft); border-color: var(--missing); color: var(--missing-strong); }
+.report.pulse { animation: pulse-ring 1.2s ease-out 4; }
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(15, 118, 110, .55); }
+  100% { box-shadow: 0 0 0 16px rgba(15, 118, 110, 0); }
+}
+.zone-msg.missing_person { border-left-color: var(--missing); background: var(--missing-soft); }
+.zone-msg.found_person { border-left-color: var(--found); background: var(--found-soft); }
+.zone-msg-title { margin: .1rem 0 0; font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--missing-strong); }
+.zone-msg.found_person .zone-msg-title { color: var(--found-strong); }
+button.found-it, button.found-it:hover { background: var(--found-strong); border-color: var(--found-strong); }
+
+/* Volunteer: demo sample reports */
+.samples { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; width: 100%; margin-top: .75rem; }
+.samples button, .samples button:hover { min-height: 36px; padding: .3rem .75rem; border-radius: 999px; font-size: 14px; font-weight: 400; background: var(--surface); border-color: var(--rule); color: var(--ink); }
+.samples button:hover { border-color: var(--slate); }
+
+/* Volunteer: a check about a missing or found person, at the top of the page */
+.task-card { margin: .5rem 0 1rem; padding: 1rem 1rem .75rem; border: 2px solid var(--ink); border-radius: 14px; background: var(--surface); box-shadow: 0 6px 18px rgba(16, 24, 40, .12); }
+.task-card.missing { border-color: var(--missing); }
+.task-card.found { border-color: var(--found); }
+.task-card.good { border-color: var(--success); background: var(--medical-soft); }
+.task-card.quiet { border-color: var(--rule); }
+.task-card.fresh { animation: task-in .3s ease-out; }
+@keyframes task-in { from { transform: translateY(-8px); opacity: 0; } }
+.task-kicker { margin: 0; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--slate); }
+.task-card.missing .task-kicker { color: var(--missing-strong); }
+.task-card.found .task-kicker { color: var(--found-strong); }
+.task-card.good .task-kicker { color: var(--medical-strong); }
+.task-card h2 { margin: .15rem 0 .3rem; font-size: 1.45rem; line-height: 1.25; color: var(--ink); }
+.task-text { margin: 0; font-size: 1.05rem; }
+.task-photo { margin: .75rem 0 0; }
+.task-photo img { display: block; width: 100%; max-height: 45vh; object-fit: contain; border-radius: 10px; background: #111821; }
+.task-photo.ref img { max-height: 22vh; }
+.task-photo figcaption { margin-top: .25rem; font-size: .85rem; color: var(--slate); }
+.task-main, .task-main:hover { min-height: 56px; margin-top: .9rem; font-size: 1.1rem; background: var(--ink); border-color: var(--ink); }
+.task-answers { display: grid; gap: .5rem; margin-top: .9rem; }
+.task-answers:empty { display: none; }
+.task-answers button { min-height: 56px; font-size: 1.1rem; }
+.task-answers .ans-good, .task-answers .ans-good:hover { background: var(--medical-strong); border-color: var(--medical-strong); }
+.task-answers .ans-bad, .task-answers .ans-bad:hover { background: var(--surface); border-color: var(--fire); color: var(--fire-strong); }
+.task-answers .ans-quiet, .task-answers .ans-quiet:hover { background: var(--surface); border-color: var(--rule); color: var(--ink); }
+.task-status { min-height: 1.4em; margin: .5rem 0 0; font-weight: 700; color: var(--ink); }
+#taskOk { margin-top: .25rem; }
+
+/* Coordinator: who the AI thinks the person is */
+.person-card { margin-top: .75rem; padding: .7rem .85rem; border-radius: 10px; background: var(--paper); }
+.incident.missing_person .person-card { background: var(--missing-soft); }
+.incident.found_person .person-card { background: var(--found-soft); }
+.person-card .person-line { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--ink); }
+.person-card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .1rem .75rem; margin: .45rem 0 0; font-size: .95rem; }
+.person-card dt { color: var(--muted); }
+.person-card dd { margin: 0; }
+.chips { list-style: none; display: flex; flex-wrap: wrap; gap: .35rem; margin: .45rem 0 0; padding: 0; }
+.chips li { padding: .12rem .6rem; border-radius: 999px; font-size: .85rem; background: var(--surface); color: var(--other-strong); }
+.chips li.alarm { background: var(--fire-soft); color: var(--fire-strong); font-weight: 700; }
+.chips li.calm { background: var(--medical-soft); color: var(--medical-strong); }
+
+/* Coordinator: a possible match between a missing and a found person. The most important thing on either card. */
+.match { margin: 0 0 1rem; border: 2px solid var(--missing); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.match.good { border-color: var(--success); }
+.match-head { display: flex; align-items: center; gap: .5rem .9rem; flex-wrap: wrap; padding: .6rem .9rem; color: #fff; background: linear-gradient(90deg, var(--missing-strong), var(--found-strong)); }
+.match.good .match-head { background: var(--medical-strong); }
+.match-head h3 { flex: 1; min-width: 12rem; margin: 0; font-size: 1.1rem; }
+.match-score { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+.match-score small { font-size: .8rem; font-weight: 400; opacity: .85; }
+.match-body { padding: .75rem .9rem .9rem; }
+.match-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.match-side { padding: .5rem .65rem; border-radius: 8px; font-size: .92rem; }
+.match-side.missing { background: var(--missing-soft); }
+.match-side.found { background: var(--found-soft); }
+.match-side .side-label { margin: 0; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.match-side.missing .side-label { color: var(--missing-strong); }
+.match-side.found .side-label { color: var(--found-strong); }
+.match-side .side-line { margin: .1rem 0; font-weight: 700; color: var(--ink); }
+.match-side p { margin: .1rem 0; }
+.match-why { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem .75rem; margin-top: .6rem; font-size: .92rem; }
+.match-why ul { list-style: none; margin: 0; padding: 0; }
+.match-why li { padding: .1rem 0 .1rem 1.3rem; text-indent: -1.3rem; }
+.match-why .agree li::before { content: "✓"; display: inline-block; width: 1.3rem; text-indent: 0; font-weight: 700; color: var(--medical-strong); }
+.match-why .differ li::before { content: "≠"; display: inline-block; width: 1.3rem; text-indent: 0; font-weight: 700; color: var(--crowd-strong); }
+.match-summary { margin: .6rem 0 0; font-weight: 700; color: var(--ink); }
+.match-note { margin: .5rem 0 0; padding: .45rem .7rem; border-radius: 8px; font-weight: 700; background: var(--paper); color: var(--ink); }
+.match-note.good { background: var(--medical-soft); color: var(--medical-strong); }
+.match-note.bad { background: var(--crowd-soft); color: var(--crowd-strong); }
+.match-progress { list-style: none; margin: .75rem 0 0; padding: 0; font-size: .95rem; }
+.match-progress li { display: flex; gap: .5rem; align-items: baseline; padding: .2rem 0; color: var(--muted); }
+.match-progress li::before { content: ""; flex: none; width: .7rem; height: .7rem; border-radius: 50%; border: 2px solid var(--rule); transform: translateY(.1rem); }
+.match-progress li.done { color: var(--text); }
+.match-progress li.done::before { background: var(--success); border-color: var(--success); }
+.match-progress li.now { color: var(--ink); font-weight: 700; }
+.match-progress li.now::before { border-color: var(--missing); animation: now-pulse 1.4s ease-in-out infinite; }
+@keyframes now-pulse { 50% { background: var(--missing-soft); } }
+.match-photo { margin: .6rem 0 0; }
+.match-photo .media-photo { width: 160px; }
+.match-photo img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; }
+.match-photo figcaption { font-size: .85rem; color: var(--muted); }
+.match-actions { display: grid; gap: .5rem; margin-top: .8rem; }
+.match-actions .check-main, .match-actions .check-main:hover {
+  min-height: 56px; flex-direction: column; align-items: flex-start; gap: .1rem; text-align: left;
+  background: var(--ink); border-color: var(--ink); font-size: 1.05rem;
+}
+.match-actions .check-main small { font-size: .85rem; font-weight: 400; opacity: .85; }
+.match-actions .go, .match-actions .go:hover { min-height: 56px; font-size: 1.05rem; background: var(--medical-strong); border-color: var(--medical-strong); }
+.match-alt { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
+.match-alt .link-button { min-height: 36px; padding: 0; font-size: .92rem; }
+.match-alt .link-button.bad { color: var(--fire-strong); }
+.match-mini { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: 0 0 1rem; padding: .55rem .8rem; border: 2px solid var(--found); border-radius: 10px; background: var(--found-soft); }
+.match-mini p { margin: 0; font-weight: 700; color: var(--found-strong); }
+.match-mini.good { border-color: var(--success); background: var(--medical-soft); }
+.match-mini.good p { color: var(--medical-strong); }
+.incident.flash { animation: card-flash 1.6s ease-out; }
+@keyframes card-flash { 0% { box-shadow: 0 0 0 4px var(--found); } 100% { box-shadow: var(--shadow); } }
+@media (max-width: 560px) { .match-pair, .match-why { grid-template-columns: 1fr; } }
+
+/* ---------- Asking a volunteer for more, and their answer on the same incident ---------- */
+/* Coordinator: the question box under the read; the AI's suggestion is pre-filled and outlined. */
+.incident .ask { margin-top: .9rem; padding: .65rem .8rem; border: 1px solid var(--border); border-radius: 10px; background: var(--paper); }
+.incident .ask.suggested { border-color: var(--accent); background: var(--accent-soft); }
+.incident .ask-label { display: block; margin: 0 0 .35rem; font-size: .85rem; font-weight: 700; color: var(--slate); }
+.incident .ask.suggested .ask-label { color: var(--accent); }
+.incident .ask-row { display: flex; gap: .5rem; }
+.incident .ask-row input { flex: 1; min-width: 0; }
+.incident .ask-row button { flex: none; }
+.incident .ask-waiting { margin: 0 0 .5rem; font-size: .92rem; font-weight: 700; color: var(--ink); }
+.incident .ask-waiting::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .45rem; border-radius: 50%; background: var(--accent); animation: now-pulse-dot 1.4s ease-in-out infinite; }
+@keyframes now-pulse-dot { 50% { opacity: .25; } }
+.reply.answer { border-left-color: var(--accent); background: var(--accent-soft); }
+
+/* Volunteer: what the stage is adding to, above the microphone */
+.stage-target { align-self: stretch; margin: 0 0 1.25rem; padding: .8rem .95rem; text-align: left; border-left: 4px solid var(--slate); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+.stage-target.question { border-left-color: var(--accent); background: var(--accent-soft); }
+.stage-target.fresh { animation: task-in .3s ease-out; }
+.stage-target-kicker { margin: 0; font-size: .85rem; font-weight: 700; color: var(--slate); }
+.stage-target.question .stage-target-kicker { color: var(--accent); }
+.stage-target-text { margin: .2rem 0 0; font-size: 1.25rem; line-height: 1.35; font-weight: 700; color: var(--ink); }
+
 @media (prefers-reduced-motion: reduce) {
+  .incident .ask-waiting::before, .stage-target.fresh { animation: none; }
+  .report.pulse, .task-card.fresh, .incident.flash, .match-progress li.now::before { animation: none; }
   .banner { transition: none; }
   .more summary::before, .guide summary::before { transition: none; }
   .mic.recording { animation: none; }
